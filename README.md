@@ -40,6 +40,23 @@ A manual AI decision run from **CerebroUI → Strategies** performs the full pip
 
 AI never talks directly to the broker. Order sizing and risk approval remain deterministic Cerebro code.
 
+## Live workflow telemetry
+
+The Strategies page polls workflow status while a manual run is active and shows operational progress for:
+
+- quant stage, symbol, elapsed time and completion percentage
+- parallel research completion counts
+- research-ready and research-error counts
+- symbols as research workers finish
+- number of research workers still in flight
+- decision-model request state and elapsed time
+- deterministic risk / proposal stage
+- an event stream covering quant, research, model, risk and approval stages
+
+The UI does **not** expose private model chain-of-thought. During the decision-model stage it shows that the request is active, how long it has been running, and the final structured decision output when complete.
+
+Quant progress is explicitly set to 100% when historical analysis finishes. The internal 99% cap is used only while a quant job is still actively processing, so the UI no longer appears stuck at 99% after the workflow has moved on to research.
+
 ## AI actions
 
 The decision model can return:
@@ -47,7 +64,7 @@ The decision model can return:
 - `BUY` — open a new position
 - `ADD` — increase an existing holding
 - `HOLD` — keep the current holding
-- `REDUCE` — reduce an existing holding
+- `REDUCE` — reduce an existing holding without fully exiting
 - `SELL` — fully exit a holding
 - `WATCH` — keep a non-held candidate under observation
 
@@ -121,6 +138,14 @@ After a completed AI run, CerebroUI shows the full decision set, reasoning, targ
 
 Risk-approved PAPER proposals are submitted immediately after the AI decision completes. The decision summary remains visible, but Approve / Reject controls are not shown because execution has already occurred.
 
+## CerebroUI presentation
+
+Reusable collapsible sections are used across the panel-heavy parts of the UI, including Dashboard, Strategies, Orders, Portfolio, Watchlist and Activity / Logs. Settings already uses collapsible subsection groups.
+
+Large result sets use bounded scroll regions so quant rankings, AI decisions, activity history, order history and positions do not force the entire page to become excessively tall.
+
+Security links in quant results, research status, orders and positions open the corresponding symbol directly in **Markets**, reusing the same quote/chart detail view as a manual market search.
+
 ## Order management
 
 The Orders page supports:
@@ -130,17 +155,19 @@ The Orders page supports:
 - PAPER order execution
 - live order-history refresh
 - cancellation of non-terminal pending PAPER orders
+- **View** navigation from any order to the security's Markets detail page
 
 Filled, cancelled, failed, disabled, or deleted orders are treated as terminal and cannot be cancelled again.
 
 ## Stored results and test runs
 
-The Strategies page provides controls to clear:
+The Strategies page provides separate controls to clear:
 
 - the latest persisted quant result
 - the latest persisted AI decision result
+- **all persistent AI decision history and thesis memory** for explicit test resets
 
-Clearing these latest artifacts does **not** erase long-term AI decision / thesis memory stored in SQLite.
+The **Clear All AI History** control requires two browser confirmations. It deletes AI runs, decisions, decision outcomes and thesis history, plus the latest AI decision artifact. It does **not** delete broker orders, settings, watchlist, activity logs, cached market history, quant artifacts or research cache.
 
 A fresh **Run AI Decision** always starts a new quant run before research and decision generation.
 
@@ -223,6 +250,7 @@ docker compose up -d cerebro cerebroui
 - `GET /ai/decision/result/{run_id}`
 - `GET /ai/decision/latest`
 - `DELETE /ai/decision/latest`
+- `DELETE /ai/decision/history` — destructive test-only AI memory reset
 - `POST /ai/decision/{run_id}/approve`
 - `POST /ai/decision/{run_id}/reject`
 
