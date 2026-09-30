@@ -16,6 +16,7 @@ import Markets from "./Markets";
 import Orders from "./Orders";
 import Portfolio from "./Portfolio";
 import Activity from "./Activity";
+import Strategies from "./Strategies";
 
 const nav = [
   ["Dashboard", LayoutDashboard],
@@ -160,6 +161,8 @@ function App() {
           <Orders />
         ) : activePage === "Portfolio" ? (
           <Portfolio />
+        ) : activePage === "Strategies" ? (
+          <Strategies />
         ) : activePage === "Activity / Logs" ? (
           <Activity />
         ) : (

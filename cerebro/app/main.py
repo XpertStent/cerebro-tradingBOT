@@ -7,6 +7,7 @@ from app.api.portfolio import router as portfolio_router
 from app.api.orders import router as orders_router
 from app.api.markets import router as markets_router
 from app.api.activity import router as activity_router
+from app.api.strategies import router as strategies_router
 
 
 NAME = config["cerebro"]["name"]
@@ -24,6 +25,7 @@ app.include_router(portfolio_router)
 app.include_router(orders_router)
 app.include_router(markets_router)
 app.include_router(activity_router)
+app.include_router(strategies_router)
 
 
 @app.get("/", tags=["System"])

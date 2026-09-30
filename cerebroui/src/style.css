@@ -1817,3 +1817,179 @@ header p {
   }
 
 }
+
+/* ================================
+   Strategies
+================================ */
+
+.strategyTopbar,
+.strategyListHeader,
+.strategyCardMain,
+.strategyActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.strategyTopbar {
+  margin-bottom: 16px;
+}
+
+.strategyTopbar h2,
+.strategyCreate h3,
+.strategyList h3 {
+  margin: 0;
+}
+
+.strategyTopbar p,
+.strategyListHeader p {
+  margin: 4px 0 0;
+  color: #8490a2;
+  font-size: 12px;
+}
+
+.strategyRefresh,
+.strategyCreateButton,
+.strategyToggle,
+.strategyDelete {
+  border: 1px solid #e2e8f0;
+  background: white;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.strategyRefresh {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 11px;
+}
+
+.strategyCreate,
+.strategyList {
+  background: white;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  padding: 18px;
+  margin-bottom: 14px;
+}
+
+.strategyCreate h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 14px;
+}
+
+.strategyForm {
+  display: grid;
+  grid-template-columns:
+    1.5fr
+    1.2fr
+    1fr
+    .8fr
+    auto;
+  gap: 9px;
+}
+
+.strategyForm input,
+.strategyForm select {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
+.strategyCreateButton {
+  background: #111827;
+  color: white;
+  border-color: #111827;
+
+  display: flex;
+  gap: 5px;
+  align-items: center;
+
+  padding: 9px 13px;
+}
+
+.strategySafety {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+
+  background: #f8fafc;
+  border-radius: 7px;
+  padding: 6px 8px;
+
+  font-size: 10px;
+  color: #64748b;
+}
+
+.strategyCard {
+  border-top: 1px solid #edf0f4;
+  padding: 15px 0;
+}
+
+.strategyCard:first-of-type {
+  margin-top: 12px;
+}
+
+.strategyMeta {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.strategyMeta span {
+  background: #f1f5f9;
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 9px;
+  color: #64748b;
+}
+
+.strategyStatus {
+  font-size: 10px;
+  font-weight: 700;
+  background: #f1f5f9;
+  color: #64748b;
+  padding: 5px 8px;
+  border-radius: 999px;
+}
+
+.strategyStatus.enabled {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.strategyActions {
+  margin-top: 10px;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.strategyToggle {
+  padding: 7px 11px;
+}
+
+.strategyToggle.enabled {
+  color: #b91c1c;
+}
+
+.strategyDelete {
+  padding: 7px 8px;
+  color: #b91c1c;
+}
+
+.strategyEmpty {
+  padding: 40px 0;
+  text-align: center;
+  color: #94a3b8;
+}
+
+@media (max-width: 900px) {
+
+  .strategyForm {
+    grid-template-columns: 1fr;
+  }
+
+}
