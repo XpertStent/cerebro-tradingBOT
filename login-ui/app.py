@@ -303,7 +303,7 @@ h1{
         </div>
     </div>
 
-    <div class="section">
+    <div id="authSection" class="section">
         <button class="sectionHeader" onclick="toggleSection('authBody','authChev')">
             <span id="authChev" class="chev">›</span>
             Additional authentication tools
@@ -483,8 +483,10 @@ async function checkAPI(){
             document.getElementById("stateValue").textContent = "Logged in";
             document.getElementById("programValue").textContent =
                 d.program_status || "Ready";
+            document.getElementById("authSection").style.display = "none";
         }else{
             setStatus("","Waiting");
+            document.getElementById("authSection").style.display = "block";
             document.getElementById("stateValue").textContent =
                 d.error || "Waiting for login";
             document.getElementById("programValue").textContent =
