@@ -2,6 +2,7 @@ import threading
 import time
 import uuid
 from copy import deepcopy
+from datetime import datetime, timezone
 
 from app.services.ai_decision import ai_decision
 from app.services.ai_execution import ai_execution
@@ -23,6 +24,25 @@ class AIDecisionJobManager:
 
     def _now(self):
         return time.time()
+
+    def _iso_now(self):
+        return datetime.now(timezone.utc).isoformat()
+
+    def _event(self, run_id, stage, message, kind="INFO", symbol=None):
+        with self._lock:
+            job = self._jobs.get(run_id)
+            if not job:
+                return
+            events = job.setdefault("events", [])
+            events.append({
+                "at": self._iso_now(),
+                "stage": stage,
+                "kind": kind,
+                "message": message,
+                "symbol": symbol,
+            })
+            if len(events) > 250:
+                del events[:-250]
 
     def start(self, *, run_type="MANUAL", enrich_research=None):
         if enrich_research is None:
@@ -54,6 +74,7 @@ class AIDecisionJobManager:
             "created_at": now,
             "started_at": None,
             "finished_at": None,
+            "events": [],
             "quant": {
                 "stage": "QUEUED",
                 "percent": 0.0,
@@ -66,8 +87,13 @@ class AIDecisionJobManager:
                 "stage": "QUEUED",
                 "candidate_count": 0,
                 "research_request_count": 0,
+                "research_complete": 0,
                 "research_ready": 0,
                 "research_errors": 0,
+                "research_current_symbol": None,
+                "research_in_flight": 0,
+                "research_symbols": {},
+                "model_started_at": None,
                 "message": "Not started",
             },
             "result": None,
@@ -76,6 +102,8 @@ class AIDecisionJobManager:
 
         with self._lock:
             self._jobs[run_id] = job
+
+        self._event(run_id, "QUEUED", "Manual AI workflow queued")
 
         threading.Thread(
             target=self._worker,
@@ -94,6 +122,7 @@ class AIDecisionJobManager:
             if not job:
                 return
             quant = job.setdefault("quant", {})
+            previous_symbol = quant.get("current_symbol")
             quant.update(values)
             processed = int(quant.get("processed") or 0)
             total = int(quant.get("total") or 0)
@@ -101,6 +130,58 @@ class AIDecisionJobManager:
                 quant["percent"] = round(min(99.0, processed / total * 100.0), 1)
             job["percent"] = round(float(quant.get("percent") or 0) * 0.55, 1)
             job["message"] = quant.get("message") or job.get("message")
+            current_symbol = quant.get("current_symbol")
+
+        if current_symbol and current_symbol != previous_symbol:
+            self._event(
+                run_id,
+                "QUANT",
+                f"Historical analysis: {current_symbol}",
+                symbol=current_symbol,
+            )
+
+    def _research_progress(self, run_id, **values):
+        with self._lock:
+            job = self._jobs.get(run_id)
+            if not job:
+                return
+            ai = job.setdefault("ai", {})
+            total = int(values.get("total") or ai.get("research_request_count") or 0)
+            complete = int(values.get("complete") or 0)
+            ready = int(values.get("ready") or 0)
+            errors = int(values.get("errors") or 0)
+            symbol = values.get("current_symbol")
+            status = values.get("status")
+
+            ai.update({
+                "stage": values.get("stage") or "RESEARCH",
+                "research_request_count": total,
+                "research_complete": complete,
+                "research_ready": ready,
+                "research_errors": errors,
+                "research_current_symbol": symbol,
+                "research_in_flight": int(values.get("in_flight") or 0),
+                "message": (
+                    f"Researching candidates: {complete}/{total} complete"
+                    if total else "Preparing research"
+                ),
+            })
+            if symbol:
+                symbols = ai.setdefault("research_symbols", {})
+                symbols[symbol] = status or "COMPLETE"
+
+            research_fraction = (complete / total) if total else 0.0
+            job["percent"] = round(60.0 + research_fraction * 20.0, 1)
+            job["message"] = ai["message"]
+
+        if symbol:
+            self._event(
+                run_id,
+                "RESEARCH",
+                f"{symbol}: {status or 'complete'} ({complete}/{total})",
+                kind="ERROR" if status == "ERROR" else "INFO",
+                symbol=symbol,
+            )
 
     def _execution_failed(self, proposal, exc):
         failed = deepcopy(proposal)
@@ -128,6 +209,7 @@ class AIDecisionJobManager:
                 started_at=self._now(),
                 message="Running fresh quant discovery and historical analysis",
             )
+            self._event(run_id, "QUANT", "Fresh quant discovery started")
 
             try:
                 quant_result = quant_screener.run(
@@ -135,29 +217,56 @@ class AIDecisionJobManager:
                 )
                 latest_quant.save(run_id=run_id, result=quant_result)
 
+                with self._lock:
+                    job = self._jobs.get(run_id)
+                    if job:
+                        quant = job.setdefault("quant", {})
+                        quant.update({
+                            "stage": "COMPLETE",
+                            "percent": 100.0,
+                            "processed": int(quant.get("total") or quant.get("processed") or 0),
+                            "current_symbol": None,
+                            "message": f"Quant complete: {len(quant_result.get('candidates') or [])} candidates",
+                        })
+                self._event(
+                    run_id,
+                    "QUANT",
+                    f"Quant complete with {len(quant_result.get('candidates') or [])} final candidates",
+                )
+
                 self.update(
                     run_id,
                     stage="RESEARCH_AND_CONTEXT",
                     percent=60.0,
                     message=(
                         "Building portfolio context and researching candidates"
-                        if enrich_research
-                        else "Building portfolio decision context"
+                        if enrich_research else "Building portfolio decision context"
                     ),
                     ai={
                         "stage": "RESEARCH_AND_CONTEXT",
                         "candidate_count": len(quant_result.get("candidates") or []),
                         "research_request_count": 0,
+                        "research_complete": 0,
                         "research_ready": 0,
                         "research_errors": 0,
+                        "research_current_symbol": None,
+                        "research_in_flight": 0,
+                        "research_symbols": {},
+                        "model_started_at": None,
                         "message": "Preparing AI decision context",
                     },
                 )
+                self._event(run_id, "RESEARCH_AND_CONTEXT", "Building portfolio and memory context")
 
                 context = ai_run_context.build(
                     run_type=run_type,
                     enrich_research=enrich_research,
+                    research_progress_callback=(
+                        (lambda **kwargs: self._research_progress(run_id, **kwargs))
+                        if enrich_research else None
+                    ),
                 )
+
                 research_candidates = [
                     item for item in (context.get("candidates") or [])
                     if item.get("research_context") is not None
@@ -170,26 +279,46 @@ class AIDecisionJobManager:
                     1 for item in research_candidates
                     if (item.get("research_context") or {}).get("status") == "ERROR"
                 )
+                research_request_count = context.get("run", {}).get("research_request_count", 0)
 
+                model_started_at = self._now()
                 self.update(
                     run_id,
                     stage="DECISION_MODEL",
                     percent=82.0,
-                    message="Generating structured portfolio decisions",
+                    message="Decision model request active — generating structured portfolio decisions",
                     ai={
                         "stage": "DECISION_MODEL",
                         "candidate_count": len(context.get("candidates") or []),
-                        "research_request_count": context.get("run", {}).get("research_request_count", 0),
+                        "research_request_count": research_request_count,
+                        "research_complete": len(research_candidates),
                         "research_ready": research_ready,
                         "research_errors": research_errors,
-                        "message": "Research/context complete; decision model running",
+                        "research_current_symbol": None,
+                        "research_in_flight": 0,
+                        "research_symbols": {
+                            item.get("symbol"): (item.get("research_context") or {}).get("status", "UNKNOWN")
+                            for item in research_candidates if item.get("symbol")
+                        },
+                        "model_started_at": model_started_at,
+                        "message": "Research/context complete; decision model request is running",
                     },
+                )
+                self._event(
+                    run_id,
+                    "DECISION_MODEL",
+                    f"Decision model started for {len(context.get('candidates') or [])} candidates",
                 )
 
                 decision_bundle = ai_decision.run(
                     run_type=run_type,
                     enrich_research=enrich_research,
                     context=context,
+                )
+                self._event(
+                    run_id,
+                    "DECISION_MODEL",
+                    f"Decision model complete with {len(decision_bundle.get('decision', {}).get('decisions') or [])} decisions",
                 )
 
                 self.update(
@@ -200,12 +329,21 @@ class AIDecisionJobManager:
                     ai={
                         "stage": "DECISION_COMPLETE",
                         "candidate_count": len(context.get("candidates") or []),
-                        "research_request_count": context.get("run", {}).get("research_request_count", 0),
+                        "research_request_count": research_request_count,
+                        "research_complete": len(research_candidates),
                         "research_ready": research_ready,
                         "research_errors": research_errors,
+                        "research_current_symbol": None,
+                        "research_in_flight": 0,
+                        "research_symbols": {
+                            item.get("symbol"): (item.get("research_context") or {}).get("status", "UNKNOWN")
+                            for item in research_candidates if item.get("symbol")
+                        },
+                        "model_started_at": model_started_at,
                         "message": "Decision model complete",
                     },
                 )
+                self._event(run_id, "RISK_PROPOSALS", "Deterministic sizing and risk evaluation started")
 
                 proposal_bundle = ai_execution.build(
                     context=context,
@@ -228,6 +366,7 @@ class AIDecisionJobManager:
                         percent=94.0,
                         message="Auto-execution enabled: submitting risk-approved paper proposals",
                     )
+                    self._event(run_id, "AUTO_EXECUTION", "Auto-execution enabled for this run")
                     executed = []
                     for proposal in proposal_bundle.get("proposals") or []:
                         if proposal.get("status") == "PENDING_APPROVAL":
@@ -244,23 +383,25 @@ class AIDecisionJobManager:
 
                 latest_ai_decision.save(run_id=run_id, result=result)
 
+                final_stage = (
+                    "AWAITING_APPROVAL"
+                    if not proposal_bundle.get("auto_execute") else "COMPLETE"
+                )
+                final_message = (
+                    "AI decision complete — review and approve or reject actionable proposals"
+                    if not proposal_bundle.get("auto_execute")
+                    else "AI decision and automatic paper execution complete"
+                )
                 self.update(
                     run_id,
                     status="COMPLETE",
-                    stage=(
-                        "AWAITING_APPROVAL"
-                        if not proposal_bundle.get("auto_execute")
-                        else "COMPLETE"
-                    ),
+                    stage=final_stage,
                     percent=100.0,
                     finished_at=self._now(),
-                    message=(
-                        "AI decision complete — review and approve or reject actionable proposals"
-                        if not proposal_bundle.get("auto_execute")
-                        else "AI decision and automatic paper execution complete"
-                    ),
+                    message=final_message,
                     result=result,
                 )
+                self._event(run_id, final_stage, final_message, kind="SUCCESS")
 
             except Exception as exc:
                 self.update(
@@ -271,6 +412,7 @@ class AIDecisionJobManager:
                     message="AI portfolio workflow failed",
                     error=str(exc),
                 )
+                self._event(run_id, "FAILED", str(exc), kind="ERROR")
 
     def update(self, run_id, **values):
         with self._lock:
@@ -288,10 +430,16 @@ class AIDecisionJobManager:
         started = data.get("started_at")
         finished = data.get("finished_at")
         data["elapsed_seconds"] = (
-            round((finished or self._now()) - started, 1)
-            if started
-            else 0.0
+            round((finished or self._now()) - started, 1) if started else 0.0
         )
+        model_started = (data.get("ai") or {}).get("model_started_at")
+        if model_started:
+            data["ai"]["model_elapsed_seconds"] = round(
+                (finished or self._now()) - model_started,
+                1,
+            )
+        else:
+            data["ai"]["model_elapsed_seconds"] = 0.0
         return data
 
     def result(self, run_id):
@@ -361,6 +509,7 @@ class AIDecisionJobManager:
             ),
             result=result,
         )
+        self._event(run_id, "APPROVAL", "Manual decision approval submitted", kind="SUCCESS")
         return result
 
     def reject(self, run_id):
@@ -390,6 +539,7 @@ class AIDecisionJobManager:
             message="AI decision rejected — no pending proposals were executed",
             result=result,
         )
+        self._event(run_id, "APPROVAL", "Manual decision rejected; no pending AI orders executed")
         return result
 
 
