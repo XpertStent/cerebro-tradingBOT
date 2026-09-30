@@ -11,7 +11,7 @@ market_data:
   default_market: US
 
 trading:
-  enabled: false
+  enabled: true
   mode: paper
 
 risk:
