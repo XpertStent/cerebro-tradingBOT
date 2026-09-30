@@ -1,0 +1,6 @@
+.env
+*.log
+moomoo-opend.tar.gz
+moomoo_OpenD_*/
+opend-state/
+

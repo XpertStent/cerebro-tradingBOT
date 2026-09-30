@@ -1,0 +1,19 @@
+services:
+  opend:
+    build: .
+    image: moomoo-opend:10.11
+    container_name: moomoo-opend
+    restart: unless-stopped
+
+    ports:
+      - "11111:11111"
+
+    environment:
+       MOOMOO_LOGIN_ACCOUNT: "${MOOMOO_LOGIN_ACCOUNT}"
+       MOOMOO_LOGIN_PASSWORD: "${MOOMOO_LOGIN_PASSWORD}"
+
+    volumes:
+      - opend-state:/root/.com.moomoo.OpenD/F3CNN
+
+volumes:
+  opend-state:
