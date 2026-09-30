@@ -379,11 +379,11 @@ class MarketMetrics:
 
         if discontinuity_count >= 2:
             discontinuity_class = (
-                "MULTIPLE_EXTREME_EVENTS"
+                "MULTIPLE_EXTREME_MOVES"
             )
         elif discontinuity_count == 1:
             discontinuity_class = (
-                "EXTREME_EVENT"
+                "EXTREME_MOVE"
             )
         else:
             discontinuity_class = "NONE"
@@ -464,6 +464,9 @@ class MarketMetrics:
 
             "discontinuity_class":
                 discontinuity_class,
+
+            "requires_event_review":
+                discontinuity_flag,
 
             "discontinuity_count":
                 discontinuity_count,
