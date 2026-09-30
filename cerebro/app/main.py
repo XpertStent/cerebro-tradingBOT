@@ -9,6 +9,7 @@ from app.api.markets import router as markets_router
 from app.api.activity import router as activity_router
 from app.api.strategies import router as strategies_router
 from app.api.watchlist import router as watchlist_router
+from app.api.ai_memory import router as ai_memory_router
 
 
 NAME = config["cerebro"]["name"]
@@ -28,6 +29,7 @@ app.include_router(markets_router)
 app.include_router(activity_router)
 app.include_router(strategies_router)
 app.include_router(watchlist_router)
+app.include_router(ai_memory_router)
 
 
 @app.get("/", tags=["System"])
