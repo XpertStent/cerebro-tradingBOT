@@ -37,6 +37,10 @@ services:
 
     network_mode: "service:opend"
 
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_RESEARCH_MODEL: ${OPENAI_RESEARCH_MODEL:-gpt-5.5}
+
     volumes:
       - cerebro-data:/data
 

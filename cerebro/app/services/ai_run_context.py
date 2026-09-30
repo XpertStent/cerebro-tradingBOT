@@ -7,8 +7,8 @@ from app.services.watchlist import watchlist
 from app.services.latest_quant import (
     latest_quant
 )
-from app.services.news_enrichment import (
-    news_enrichment
+from app.services.ai_web_research import (
+    ai_web_research
 )
 
 
@@ -263,17 +263,18 @@ class AIRunContextBuilder:
         }
 
         #
-        # Build web/news enrichment requests only for:
+        # AI web research is performed for:
         #
-        #   1. current holdings
+        #   1. current portfolio holdings
         #   2. latest quant candidates
         #
-        # Plain watchlist-only names are intentionally
-        # excluded to avoid unnecessary web traffic.
+        # Research is cached, so repeated AI context
+        # builds do not repeatedly consume API calls.
         #
-        enrichment_requests = []
+        research_requests = []
 
         for symbol in symbols:
+
             if (
                 symbol not in held_symbols
                 and symbol not in quant_symbols
@@ -282,9 +283,9 @@ class AIRunContextBuilder:
 
             quant_item = (
                 quant_by_symbol.get(
-                    symbol,
-                    {}
+                    symbol
                 )
+                or {}
             )
 
             metrics = (
@@ -294,19 +295,10 @@ class AIRunContextBuilder:
                 or {}
             )
 
-            event_dates = [
-                event.get("date")
-                for event in (
-                    metrics.get(
-                        "discontinuity_events"
-                    )
-                    or []
-                )
-                if event.get("date")
-            ]
-
             company_name = (
-                quant_item.get("name")
+                quant_item.get(
+                    "name"
+                )
             )
 
             if not company_name:
@@ -329,20 +321,75 @@ class AIRunContextBuilder:
                         )
                     )
 
-            enrichment_requests.append({
+            relationships = []
+
+            if symbol in held_symbols:
+                relationships.append(
+                    "HELD"
+                )
+
+            if symbol in watch_symbols:
+                relationships.append(
+                    "WATCHLIST"
+                )
+
+            if symbol in quant_symbols:
+                relationships.append(
+                    "QUANT_CANDIDATE"
+                )
+
+            if any(
+                order.get(
+                    "symbol"
+                ) == symbol
+                for order
+                in pending_orders
+            ):
+                relationships.append(
+                    "PENDING_ORDER"
+                )
+
+            quant_research_context = None
+
+            if quant_item:
+                quant_research_context = {
+                    "rank":
+                        quant_item.get(
+                            "rank"
+                        ),
+
+                    "scores":
+                        quant_item.get(
+                            "quant"
+                        ),
+
+                    "metrics":
+                        metrics,
+
+                    "discovery_sources":
+                        quant_item.get(
+                            "sources"
+                        ),
+                }
+
+            research_requests.append({
                 "symbol":
                     symbol,
 
                 "company_name":
                     company_name,
 
-                "event_dates":
-                    event_dates,
+                "relationships":
+                    relationships,
+
+                "quant_context":
+                    quant_research_context,
             })
 
-        news_by_symbol = (
-            news_enrichment.enrich_many(
-                enrichment_requests
+        research_by_symbol = (
+            ai_web_research
+            .research_many(
+                research_requests
             )
         )
 
@@ -492,8 +539,8 @@ class AIRunContextBuilder:
                 "quant":
                     quant_context,
 
-                "news_context":
-                    news_by_symbol.get(
+                "research_context":
+                    research_by_symbol.get(
                         symbol
                     ),
 

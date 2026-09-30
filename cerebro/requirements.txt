@@ -2,3 +2,5 @@ fastapi
 uvicorn[standard]
 pyyaml
 moomoo-api
+
+openai
