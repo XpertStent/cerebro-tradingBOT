@@ -6,6 +6,9 @@ from copy import deepcopy
 from app.services.quant_screener import (
     quant_screener
 )
+from app.services.latest_quant import (
+    latest_quant
+)
 
 
 class QuantJobManager:
@@ -127,6 +130,15 @@ class QuantJobManager:
                             **kwargs
                         )
                     )
+                )
+
+                #
+                # Persist the most recent successful
+                # quant result for AI/context use.
+                #
+                latest_quant.save(
+                    run_id=run_id,
+                    result=result
                 )
 
                 self.update(
