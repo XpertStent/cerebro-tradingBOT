@@ -203,11 +203,16 @@ class QuantScreener:
         # only expensive candle analysis
         # for strongest discovered names.
         #
-        deep_candidates = (
-            candidates[
-                :deep_limit
-            ]
-        )
+        #
+        # Analyse the entire discovered universe.
+        #
+        # We deliberately do NOT pre-trim securities
+        # based on the cheap discovery score. Every
+        # security discovered by any independent
+        # screen gets full historical factor analysis
+        # before final ranking.
+        #
+        deep_candidates = candidates
 
         analysed = []
 
@@ -216,14 +221,15 @@ class QuantScreener:
         # every candidate in as few
         # API requests as possible.
         #
-        snapshot_map = (
-            self._batched_snapshots(
-                [
-                    item["symbol"]
-                    for item in deep_candidates
-                ]
-                + ["US.SPY"]
-            )
+        (
+            snapshot_map,
+            snapshot_failures
+        ) = self._batched_snapshots(
+            [
+                item["symbol"]
+                for item in deep_candidates
+            ]
+            + ["US.SPY"]
         )
 
         #
@@ -528,6 +534,18 @@ class QuantScreener:
             "discovered_unique":
                 len(candidates),
 
+            "snapshot_success":
+                len(snapshot_map),
+
+            "snapshot_failed":
+                len(snapshot_failures),
+
+            "snapshot_failures":
+                snapshot_failures,
+
+            "deep_requested":
+                len(deep_candidates),
+
             "deep_analysed":
                 len(analysed),
 
@@ -563,34 +581,99 @@ class QuantScreener:
         symbols,
         batch_size=400
     ):
+        """
+        Fetch snapshots efficiently.
+
+        Moomoo can reject an entire snapshot batch
+        when even one symbol has unavailable quote data
+        (for example some US OTC securities).
+
+        Healthy batches remain batched.
+        Failed batches are recursively divided until
+        the unsupported symbol(s) are isolated.
+
+        This avoids falling back to one request per
+        security.
+        """
+
         result = {}
+        failures = {}
+
+        #
+        # Remove duplicates while keeping order.
+        #
+        symbols = list(
+            dict.fromkeys(
+                symbol
+                for symbol in symbols
+                if symbol
+            )
+        )
+
+        def fetch_batch(batch):
+
+            if not batch:
+                return
+
+            try:
+                rows = (
+                    opend.get_snapshots(
+                        batch
+                    )
+                )
+
+                for row in rows:
+                    symbol = (
+                        row.get("symbol")
+                        or row.get("code")
+                        or row.get("stock_code")
+                    )
+
+                    if symbol:
+                        result[symbol] = row
+
+                return
+
+            except Exception as exc:
+
+                #
+                # One symbol left means we have
+                # isolated the incompatible security.
+                #
+                if len(batch) == 1:
+                    failures[
+                        batch[0]
+                    ] = str(exc)
+                    return
+
+                #
+                # Divide the failed batch and retry
+                # each half.
+                #
+                midpoint = (
+                    len(batch) // 2
+                )
+
+                fetch_batch(
+                    batch[:midpoint]
+                )
+
+                fetch_batch(
+                    batch[midpoint:]
+                )
 
         for i in range(
             0,
             len(symbols),
             batch_size
         ):
-            batch = symbols[
-                i:i + batch_size
-            ]
-
-            rows = (
-                opend.get_snapshots(
-                    batch
-                )
+            fetch_batch(
+                symbols[
+                    i:i + batch_size
+                ]
             )
 
-            for row in rows:
-                symbol = (
-                    row.get("symbol")
-                    or row.get("code")
-                    or row.get("stock_code")
-                )
-
-                if symbol:
-                    result[symbol] = row
-
-        return result
+        return result, failures
 
 
     def _screen(
