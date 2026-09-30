@@ -1590,3 +1590,35 @@ header p {
   }
 
 }
+
+/* Orders search dropdown fixes */
+
+.orderEntryPanel {
+  position: relative;
+  overflow: visible;
+}
+
+.orderField {
+  overflow: visible;
+}
+
+.orderSuggestions {
+  z-index: 100;
+}
+
+.ordersLayout {
+  overflow: visible;
+}
+
+.clickablePosition {
+  cursor: pointer;
+  transition: background .12s ease;
+}
+
+.clickablePosition:hover {
+  background: #f8fafc;
+}
+
+.clickablePosition td:first-child strong {
+  color: #2563eb;
+}

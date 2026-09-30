@@ -342,6 +342,43 @@ export default function Markets() {
 
   useEffect(() => {
 
+    const pendingSymbol =
+      sessionStorage.getItem(
+        "cerebro.market.symbol"
+      );
+
+    const pendingName =
+      sessionStorage.getItem(
+        "cerebro.market.name"
+      );
+
+    if (pendingSymbol) {
+
+      const ticker =
+        pendingSymbol.split(".").pop();
+
+      setSymbol(pendingSymbol);
+
+      setSearch(
+        pendingName
+          ? `${ticker} — ${pendingName}`
+          : ticker
+      );
+
+      sessionStorage.removeItem(
+        "cerebro.market.symbol"
+      );
+
+      sessionStorage.removeItem(
+        "cerebro.market.name"
+      );
+    }
+
+  }, []);
+
+
+  useEffect(() => {
+
     if (symbol)
       loadSymbol(symbol);
 

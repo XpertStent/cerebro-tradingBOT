@@ -306,7 +306,24 @@ export default function Portfolio() {
 
                 positions.map(position => (
 
-                  <tr key={position.symbol}>
+                  <tr
+                    key={position.symbol}
+                    className="clickablePosition"
+                    title={`Open ${position.symbol} in Markets`}
+                    onClick={() => {
+                      window.dispatchEvent(
+                        new CustomEvent(
+                          "cerebro-open-market",
+                          {
+                            detail: {
+                              symbol: position.symbol,
+                              name: position.name
+                            }
+                          }
+                        )
+                      );
+                    }}
+                  >
 
                     <td>
 

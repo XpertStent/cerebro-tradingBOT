@@ -64,6 +64,36 @@ function App() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const openMarket = event => {
+      if (event.detail?.symbol) {
+        sessionStorage.setItem(
+          "cerebro.market.symbol",
+          event.detail.symbol
+        );
+
+        sessionStorage.setItem(
+          "cerebro.market.name",
+          event.detail.name || ""
+        );
+
+        setActivePage("Markets");
+      }
+    };
+
+    window.addEventListener(
+      "cerebro-open-market",
+      openMarket
+    );
+
+    return () => {
+      window.removeEventListener(
+        "cerebro-open-market",
+        openMarket
+      );
+    };
+  }, []);
+
   const ready = system?.status === "READY";
 
   const openOrders =

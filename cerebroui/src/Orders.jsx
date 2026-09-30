@@ -9,7 +9,7 @@ import {
 export default function Orders() {
   const [symbolSearch, setSymbolSearch] = useState("");
   const [suggestions, setSuggestions] = useState([]);
-  const [symbol, setSymbol] = useState("US.AAPL");
+  const [symbol, setSymbol] = useState(null);
 
   const [side, setSide] = useState("BUY");
   const [quantity, setQuantity] = useState("");
@@ -203,6 +203,16 @@ export default function Orders() {
 
                   setSymbolSearch(value);
 
+                  // Typing a new search invalidates the old selection.
+                  setSymbol(null);
+                  setPreview(null);
+                  setMessage(null);
+
+                  if (!value.trim()) {
+                    setSuggestions([]);
+                    return;
+                  }
+
                   clearTimeout(
                     window.__orderSearchTimer
                   );
@@ -210,8 +220,14 @@ export default function Orders() {
                   window.__orderSearchTimer =
                     setTimeout(
                       () => searchSymbols(value),
-                      250
+                      200
                     );
+                }}
+
+                onFocus={() => {
+                  if (symbolSearch.trim()) {
+                    searchSymbols(symbolSearch);
+                  }
                 }}
                 placeholder="Search ticker or company"
               />
