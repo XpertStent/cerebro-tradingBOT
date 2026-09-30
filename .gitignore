@@ -4,3 +4,7 @@ moomoo-opend.tar.gz
 moomoo_OpenD_*/
 opend-state/
 
+
+# Python bytecode
+__pycache__/
+*.pyc
