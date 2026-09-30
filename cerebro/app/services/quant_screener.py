@@ -12,6 +12,8 @@ from moomoo import (
 from app.services.market_metrics import (
     market_metrics
 )
+from app.services.market_series import market_series
+from app.services.opend import opend
 
 
 class QuantScreener:
@@ -209,11 +211,60 @@ class QuantScreener:
 
         analysed = []
 
+        #
+        # Batch current snapshots for
+        # every candidate in as few
+        # API requests as possible.
+        #
+        snapshot_map = (
+            self._batched_snapshots(
+                [
+                    item["symbol"]
+                    for item in deep_candidates
+                ]
+                + ["US.SPY"]
+            )
+        )
+
+        #
+        # Determine current US state once.
+        #
+        market_states = (
+            opend.get_market_states()
+        )
+
+        us_state = None
+
+        for state in market_states:
+            if str(
+                state.get("id")
+                or state.get("market")
+                or ""
+            ).upper() == "US":
+                us_state = state.get(
+                    "state"
+                )
+                break
+
         for item in deep_candidates:
             try:
+                series = (
+                    market_series.build(
+                        item["symbol"],
+                        snapshot=snapshot_map.get(
+                            item["symbol"]
+                        ),
+                        market_state=us_state,
+                        minimum_bars=300
+                    )
+                )
+
                 metrics = (
                     market_metrics.build(
-                        item["symbol"]
+                        item["symbol"],
+                        candles=series[
+                            "bars"
+                        ]
                     )
                 )
 
@@ -241,11 +292,26 @@ class QuantScreener:
             })
 
         #
-        # Benchmark once.
+        # Benchmark uses the same
+        # cache + live overlay path.
         #
+        spy_series = (
+            market_series.build(
+                "US.SPY",
+                snapshot=snapshot_map.get(
+                    "US.SPY"
+                ),
+                market_state=us_state,
+                minimum_bars=300
+            )
+        )
+
         spy = (
             market_metrics.build(
-                "US.SPY"
+                "US.SPY",
+                candles=spy_series[
+                    "bars"
+                ]
             )
         )
 
@@ -491,6 +557,41 @@ class QuantScreener:
             "candidates":
                 final,
         }
+
+    def _batched_snapshots(
+        self,
+        symbols,
+        batch_size=400
+    ):
+        result = {}
+
+        for i in range(
+            0,
+            len(symbols),
+            batch_size
+        ):
+            batch = symbols[
+                i:i + batch_size
+            ]
+
+            rows = (
+                opend.get_snapshots(
+                    batch
+                )
+            )
+
+            for row in rows:
+                symbol = (
+                    row.get("symbol")
+                    or row.get("code")
+                    or row.get("stock_code")
+                )
+
+                if symbol:
+                    result[symbol] = row
+
+        return result
+
 
     def _screen(
         self,

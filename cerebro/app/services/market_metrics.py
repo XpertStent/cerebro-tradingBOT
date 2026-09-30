@@ -8,20 +8,22 @@ class MarketMetrics:
     def build(
         self,
         symbol: str,
-        count: int = 260
+        count: int = 260,
+        candles=None
     ):
-        candles = opend.get_candles(
-            symbol=symbol,
-            timeframe="1d",
-            count=count
-        )
-
-        if isinstance(candles, dict):
-            candles = (
-                candles.get("candles")
-                or candles.get("data")
-                or []
+        if candles is None:
+            candles = opend.get_candles(
+                symbol=symbol,
+                timeframe="1d",
+                count=count
             )
+
+            if isinstance(candles, dict):
+                candles = (
+                    candles.get("candles")
+                    or candles.get("data")
+                    or []
+                )
 
         if not candles:
             return {
