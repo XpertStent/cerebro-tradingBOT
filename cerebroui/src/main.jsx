@@ -8,7 +8,8 @@ import {
   Wallet,
   ScrollText,
   Settings as SettingsIcon,
-  CircleDollarSign
+  CircleDollarSign,
+  Star
 } from "lucide-react";
 
 import "./style.css";
@@ -23,6 +24,7 @@ import Settings from "./Settings";
 const nav = [
   ["Dashboard", LayoutDashboard],
   ["Markets", LineChart],
+  ["Watchlist", Star],
   ["Strategies", BrainCircuit],
   ["Orders", ClipboardList],
   ["Portfolio", Wallet],
