@@ -58,37 +58,42 @@ button { width:20%; }
 </form>
 
 <script>
-let captchaVisible = false;
+let currentMode = "raw";
 
 async function poll() {
     const r = await fetch("/poll", {cache:"no-store"});
     const d = await r.json();
+
+    currentMode = d.mode;
 
     const terminal = document.getElementById("terminal");
     terminal.textContent = d.output;
     terminal.scrollTop = terminal.scrollHeight;
 
     const input = document.getElementById("cmd");
-    const lower = d.output.toLowerCase();
+    const img = document.getElementById("captcha");
 
-    if (lower.includes("please enter password")) {
+    if (d.mode === "password") {
         input.type = "password";
         input.placeholder = "Password";
-    } else if (lower.includes("graphic verification code")) {
+    } else if (d.mode === "account") {
+        input.type = "text";
+        input.placeholder = "Moomoo account/email";
+    } else if (d.mode === "remember") {
+        input.type = "text";
+        input.placeholder = "Y or N";
+    } else if (d.mode === "captcha") {
         input.type = "text";
         input.placeholder = "Enter captcha code";
-    } else if (lower.includes("sms verification code")) {
+    } else if (d.mode === "sms") {
         input.type = "text";
-        input.placeholder = "Enter SMS code or command";
+        input.placeholder = "Enter SMS code";
     } else {
         input.type = "text";
-        input.placeholder = "Enter response or OpenD command";
+        input.placeholder = "Enter OpenD response/command";
     }
 
-    captchaVisible = d.captcha;
-
-    const img = document.getElementById("captcha");
-    if (captchaVisible) {
+    if (d.mode === "captcha" && d.captcha) {
         img.src = "/captcha?t=" + Date.now();
         img.style.display = "block";
     } else {
@@ -104,15 +109,9 @@ document.getElementById("form").onsubmit = async e => {
 
     if (!value) return;
 
-    const terminalText = document.getElementById("terminal").textContent.toLowerCase();
-
-    if (captchaVisible && !value.startsWith("input_pic_verify_code")) {
+    if (currentMode === "captcha") {
         value = "input_pic_verify_code -code=" + value;
-    } else if (
-        terminalText.includes("sms verification code") &&
-        /^[0-9]{4,8}$/.test(value) &&
-        !value.startsWith("input_phone_verify_code")
-    ) {
+    } else if (currentMode === "sms") {
         value = "input_phone_verify_code -code=" + value;
     }
 
@@ -165,14 +164,41 @@ def read_socket():
 
     return result
 
+def detect_mode(text):
+    t = text.lower()
+
+    if "please enter account" in t:
+        return "account"
+
+    if "please enter password" in t:
+        return "password"
+
+    if "remember the password" in t:
+        return "remember"
+
+    if "graphic verification code required" in t or "input_pic_verify_code" in t:
+        return "captcha"
+
+    if "sms verification code required" in t or "input_phone_verify_code" in t:
+        return "sms"
+
+    return "raw"
+
+def current_prompt_text():
+    # Look only at recent output so stale prompts don't win
+    recent = history[-1200:]
+    return recent
+
 @app.route("/")
 def index():
     global history
+
     with lock:
         try:
             connect()
         except Exception as e:
             history += f"Connection error: {e}\n"
+
     return render_template_string(HTML)
 
 @app.route("/poll")
@@ -187,8 +213,12 @@ def poll():
             history += f"\nConnection error: {e}\n"
             sock = None
 
+        recent = current_prompt_text()
+        mode = detect_mode(recent)
+
     return jsonify({
         "output": history,
+        "mode": mode,
         "captcha": os.path.exists(CAPTCHA)
     })
 
@@ -203,7 +233,9 @@ def send():
             connect()
             sock.sendall((value + "\r\n").encode())
 
-            if "password" in history.lower()[-200:]:
+            recent = current_prompt_text().lower()
+
+            if "please enter password" in recent:
                 history += ">>> ********\n"
             else:
                 history += f">>> {value}\n"
