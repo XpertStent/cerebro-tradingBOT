@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.ai_decision_jobs import ai_decision_jobs
+from app.services.ai_history_reset import ai_history_reset
 
 
 router = APIRouter(
@@ -49,6 +50,12 @@ def get_latest_decision():
 @router.delete("/latest")
 def clear_latest_decision():
     return ai_decision_jobs.clear_latest()
+
+
+@router.delete("/history")
+def clear_ai_history_for_testing():
+    """Clear persistent AI decision/thesis memory for explicit test resets."""
+    return ai_history_reset.clear_all()
 
 
 @router.post("/{run_id}/approve")
