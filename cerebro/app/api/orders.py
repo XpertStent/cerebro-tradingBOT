@@ -1,11 +1,11 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.config import config
 from app.services.trading import trading
 from app.services.opend import opend
 from app.services.risk import risk
 from app.services.activity import activity
+from app.services.settings import settings
 
 
 router = APIRouter(
@@ -26,12 +26,10 @@ class OrderRequest(BaseModel):
 def orders():
     try:
         data = trading.get_orders()
-
         return {
             "count": len(data),
             "orders": data
         }
-
     except Exception as e:
         raise HTTPException(
             status_code=503,
@@ -70,8 +68,8 @@ def build_preview(order: OrderRequest):
     )
 
     result = risk.evaluate_order(
-        trading_enabled=config["trading"]["enabled"],
-        mode=config["trading"]["mode"],
+        trading_enabled=settings.get_bool("trading.enabled"),
+        mode=str(settings.get("trading.mode")),
         symbol=quote["symbol"],
         side=side,
         quantity=order.quantity,
@@ -137,7 +135,7 @@ def preview_order(order: OrderRequest):
 @router.post("/execute")
 def execute_order(order: OrderRequest):
     try:
-        if config["trading"]["mode"].lower() != "paper":
+        if str(settings.get("trading.mode")).lower() != "paper":
             raise HTTPException(
                 status_code=403,
                 detail="Live trading is not supported by this endpoint"
@@ -172,9 +170,7 @@ def execute_order(order: OrderRequest):
                 f"{preview['symbol']}"
             ),
             symbol=preview["symbol"],
-            order_id=str(
-                result.get("order_id", "")
-            )
+            order_id=str(result.get("order_id", ""))
         )
 
         activity.write(
@@ -187,9 +183,7 @@ def execute_order(order: OrderRequest):
                 f"{result.get('status')}"
             ),
             symbol=preview["symbol"],
-            order_id=str(
-                result.get("order_id", "")
-            )
+            order_id=str(result.get("order_id", ""))
         )
 
         return {
