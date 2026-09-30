@@ -27,9 +27,12 @@ class TradingClient:
     def _clean(value):
         if hasattr(value, "item"):
             try:
-                return value.item()
+                value = value.item()
             except Exception:
                 pass
+
+        if value in ("N/A", "nan", ""):
+            return None
 
         return value
 
@@ -98,16 +101,16 @@ class TradingClient:
                 "realized_pl"
             ]
 
-            result = {
+            return {
                 "account_id": account_id,
-                "environment": "PAPER"
+                "mode": "PAPER",
+                "total_value": self._clean(row.get("total_assets")),
+                "cash": self._clean(row.get("cash")),
+                "market_value": self._clean(row.get("market_val")),
+                "available_cash": self._clean(row.get("available_funds")),
+                "unrealized_pnl": self._clean(row.get("unrealized_pl")),
+                "realized_pnl": self._clean(row.get("realized_pl"))
             }
-
-            for field in fields:
-                if field in row.index:
-                    result[field] = self._clean(row.get(field))
-
-            return result
 
         finally:
             ctx.close()
@@ -145,6 +148,45 @@ class TradingClient:
 
         finally:
             ctx.close()
+
+
+    def get_orders(self):
+        account_id = self._paper_account_id()
+        ctx = self._context()
+
+        try:
+            ret, data = ctx.order_list_query(
+                trd_env=TrdEnv.SIMULATE,
+                acc_id=account_id,
+                refresh_cache=True
+            )
+
+            if ret != RET_OK:
+                raise RuntimeError(str(data))
+
+            orders = []
+
+            for _, row in data.iterrows():
+                orders.append({
+                    "order_id": self._clean(row.get("order_id")),
+                    "symbol": self._clean(row.get("code")),
+                    "name": self._clean(row.get("stock_name")),
+                    "side": str(row.get("trd_side")),
+                    "order_type": str(row.get("order_type")),
+                    "status": str(row.get("order_status")),
+                    "quantity": self._clean(row.get("qty")),
+                    "price": self._clean(row.get("price")),
+                    "filled_quantity": self._clean(row.get("dealt_qty")),
+                    "filled_average_price": self._clean(row.get("dealt_avg_price")),
+                    "created_at": self._clean(row.get("create_time")),
+                    "updated_at": self._clean(row.get("updated_time"))
+                })
+
+            return orders
+
+        finally:
+            ctx.close()
+
 
 
 trading = TradingClient(

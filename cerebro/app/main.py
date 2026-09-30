@@ -4,6 +4,7 @@ from app.config import config
 from app.services.opend import opend
 from app.api.market import router as market_router
 from app.api.portfolio import router as portfolio_router
+from app.api.orders import router as orders_router
 
 
 NAME = config["cerebro"]["name"]
@@ -18,6 +19,7 @@ app = FastAPI(
 
 app.include_router(market_router)
 app.include_router(portfolio_router)
+app.include_router(orders_router)
 
 
 @app.get("/", tags=["System"])
