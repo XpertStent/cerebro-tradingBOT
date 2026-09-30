@@ -1,7 +1,7 @@
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.services.opend import opend
@@ -271,7 +271,20 @@ class MarketHistoryStore:
             "symbol": symbol,
             "source": "MOOMOO",
             "bars_received":
-                len(candles),
+                len(
+                    (
+                        candles.get(
+                            "candles",
+                            []
+                        )
+                        if isinstance(
+                            candles,
+                            dict
+                        )
+                        else candles
+                    )
+                ),
+
             "bars_stored":
                 stored,
         }
@@ -299,10 +312,31 @@ class MarketHistoryStore:
                 )
 
             try:
+                today = datetime.now(
+                    ZoneInfo(
+                        "America/New_York"
+                    )
+                ).date()
+
+                #
+                # Roughly 3 calendar years easily
+                # covers 500 trading sessions.
+                #
+                start = (
+                    today
+                    - timedelta(days=1100)
+                )
+
                 return opend.get_candles(
                     symbol=symbol,
                     timeframe="1d",
-                    count=count
+                    count=count,
+                    start=start.strftime(
+                        "%Y-%m-%d"
+                    ),
+                    end=today.strftime(
+                        "%Y-%m-%d"
+                    )
                 )
 
             except RuntimeError as exc:
@@ -324,10 +358,27 @@ class MarketHistoryStore:
                     31
                 )
 
+                today = datetime.now(
+                    ZoneInfo(
+                        "America/New_York"
+                    )
+                ).date()
+
+                start = (
+                    today
+                    - timedelta(days=1100)
+                )
+
                 return opend.get_candles(
                     symbol=symbol,
                     timeframe="1d",
-                    count=count
+                    count=count,
+                    start=start.strftime(
+                        "%Y-%m-%d"
+                    ),
+                    end=today.strftime(
+                        "%Y-%m-%d"
+                    )
                 )
 
             finally:
@@ -377,7 +428,8 @@ class MarketHistoryStore:
         for row in candles:
 
             date_value = (
-                row.get("time_key")
+                row.get("time")
+                or row.get("time_key")
                 or row.get("date")
                 or row.get("trade_date")
             )

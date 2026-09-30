@@ -175,7 +175,9 @@ class OpenDClient:
         self,
         symbol: str,
         timeframe: str = "1d",
-        count: int = 100
+        count: int = 100,
+        start: str = None,
+        end: str = None
     ):
 
         symbol = self.normalize_symbol(symbol)
@@ -191,12 +193,22 @@ class OpenDClient:
 
         try:
 
+            kwargs = {
+                "code": symbol,
+                "ktype": self.TIMEFRAMES[timeframe],
+                "autype": AuType.NONE,
+                "max_count": 1000,
+            }
+
+            if start is not None:
+                kwargs["start"] = start
+
+            if end is not None:
+                kwargs["end"] = end
+
             ret, data, page_req_key = (
                 ctx.request_history_kline(
-                    code=symbol,
-                    ktype=self.TIMEFRAMES[timeframe],
-                    autype=AuType.NONE,
-                    max_count=1000
+                    **kwargs
                 )
             )
 
