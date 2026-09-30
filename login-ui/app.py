@@ -1,215 +1,214 @@
-from flask import Flask, request, session, redirect, url_for, render_template_string, send_file
+from flask import Flask, request, jsonify, send_file, render_template_string
 import socket
+import threading
 import time
-import uuid
 import os
 
 app = Flask(__name__)
-app.secret_key = "moomoo-opend-login-ui"
 
 HOST = "opend"
 PORT = 22222
 CAPTCHA = "/root/.com.moomoo.OpenD/F3CNN/PicVerifyCode.png"
 
-connections = {}
+sock = None
+history = ""
+lock = threading.Lock()
 
-PAGE = """
+HTML = """
 <!doctype html>
 <html>
 <head>
 <title>Moomoo OpenD Login</title>
 <style>
-body { font-family: Arial; max-width:600px; margin:50px auto; }
-input,button { width:100%; padding:12px; margin:6px 0; box-sizing:border-box; }
-.status { padding:12px; background:#eee; margin-bottom:15px; white-space:pre-wrap; }
-.error { background:#ffd6d6; }
-.success { background:#d7ffd7; }
-img { display:block; margin:15px auto; max-width:100%; }
+body {
+    font-family: Arial;
+    max-width: 850px;
+    margin: 40px auto;
+}
+#terminal {
+    background: #111;
+    color: #eee;
+    padding: 20px;
+    min-height: 350px;
+    white-space: pre-wrap;
+    font-family: monospace;
+    overflow-y: auto;
+}
+input, button {
+    padding: 12px;
+    font-size: 16px;
+    box-sizing: border-box;
+}
+input { width: 78%; }
+button { width: 20%; }
+#captcha {
+    margin: 15px 0;
+    max-width: 400px;
+}
 </style>
 </head>
+
 <body>
 
-<h2>Moomoo OpenD Login</h2>
+<h2>Moomoo OpenD</h2>
 
-{% if message %}
-<div class="status {{ css }}">{{ message }}</div>
-{% endif %}
+<pre id="terminal">Connecting...</pre>
 
-{% if step == "account" %}
-<form method="post">
-<input name="value" placeholder="Moomoo account/email" required autofocus>
-<button>Continue</button>
+<img id="captcha" style="display:none">
+
+<form id="form">
+    <input id="cmd" autocomplete="off" autofocus>
+    <button>Send</button>
 </form>
 
-{% elif step == "password" %}
-<form method="post">
-<input name="value" type="password" placeholder="Password" required autofocus>
-<button>Continue</button>
-</form>
+<script>
+async function poll() {
+    const r = await fetch("/poll");
+    const d = await r.json();
 
-{% elif step == "remember" %}
-<form method="post">
-<button name="value" value="Y">Remember password</button>
-<button name="value" value="N">Do not remember</button>
-</form>
+    const terminal = document.getElementById("terminal");
+    terminal.textContent = d.output;
+    terminal.scrollTop = terminal.scrollHeight;
 
-{% elif step == "pic_request" %}
-<form method="post">
-<button name="value" value="req_pic_verify_code">Load verification image</button>
-</form>
+    const input = document.getElementById("cmd");
 
-{% elif step == "pic_code" %}
-<img src="/captcha?x={{ nonce }}">
-<form method="post">
-<input name="value" placeholder="Enter code shown above" required autofocus>
-<button>Verify</button>
-</form>
+    if (d.output.toLowerCase().includes("please enter password")) {
+        input.type = "password";
+        input.placeholder = "Password";
+    } else {
+        input.type = "text";
+        input.placeholder = "Enter response or OpenD command";
+    }
 
-{% elif step == "sms_request" %}
-<form method="post">
-<button name="value" value="req_phone_verify_code">Request SMS code</button>
-</form>
+    if (d.captcha) {
+        const img = document.getElementById("captcha");
+        img.src = "/captcha?" + Date.now();
+        img.style.display = "block";
+    }
+}
 
-{% elif step == "sms_code" %}
-<form method="post">
-<input name="value" placeholder="6 digit SMS code" required autofocus>
-<button>Verify</button>
-</form>
+document.getElementById("form").onsubmit = async e => {
+    e.preventDefault();
 
-{% elif step == "success" %}
-<div class="status success">OpenD login successful and ready.</div>
+    const input = document.getElementById("cmd");
+    const value = input.value;
 
-{% endif %}
+    input.value = "";
 
-<form method="post" action="/reset">
-<button>Start over</button>
-</form>
+    await fetch("/send", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({value})
+    });
+
+    poll();
+};
+
+setInterval(poll, 1000);
+poll();
+</script>
 
 </body>
 </html>
 """
 
-def recv_available(sock, wait=0.6):
-    time.sleep(wait)
+def connect():
+    global sock, history
+
+    if sock:
+        return
+
+    sock = socket.create_connection((HOST, PORT), timeout=5)
     sock.settimeout(0.2)
-    result = []
+
+    history += read_socket()
+
+
+def read_socket():
+    global sock
+
+    result = ""
+
+    if not sock:
+        return result
 
     while True:
         try:
             data = sock.recv(8192)
             if not data:
                 break
-            result.append(data.decode(errors="replace"))
+            result += data.decode(errors="replace")
         except socket.timeout:
             break
+        except Exception:
+            break
 
-    return "".join(result)
-
-
-def get_conn():
-    sid = session.setdefault("sid", str(uuid.uuid4()))
-
-    if sid not in connections:
-        s = socket.create_connection((HOST, PORT), timeout=5)
-        connections[sid] = s
-        session["buffer"] = recv_available(s)
-
-    return connections[sid]
+    return result
 
 
-def send(value):
-    s = get_conn()
-    s.sendall((value + "\r\n").encode())
-    output = recv_available(s)
-    session["buffer"] = output
-    return output
-
-
-def detect(text):
-    t = text.lower()
-
-    if "login successful" in t or "required data is ready" in t:
-        return "success", "Login successful.", "success"
-
-    if "please enter account" in t:
-        return "account", None, ""
-
-    if "please enter password" in t:
-        return "password", None, ""
-
-    if "remember the password" in t:
-        return "remember", None, ""
-
-    if "graphic verification code required" in t:
-        return "pic_request", "Graphic verification required.", ""
-
-    if "graphic verification code downloaded" in t:
-        return "pic_code", None, ""
-
-    if "sms verification code required" in t:
-        return "sms_request", "SMS verification required.", ""
-
-    if "sms verification code requested successfully" in t:
-        return "sms_code", "SMS code sent.", ""
-
-    if "input_phone_verify_code" in t:
-        return "sms_code", None, ""
-
-    return session.get("step", "account"), text.strip() or None, ""
-
-
-@app.route("/", methods=["GET", "POST"])
+@app.route("/")
 def index():
-    get_conn()
+    with lock:
+        try:
+            connect()
+        except Exception as e:
+            global history
+            history += f"Connection error: {e}\n"
 
-    if request.method == "POST":
-        value = request.form["value"]
-        step = session.get("step")
-
-        if step == "pic_code":
-            value = f"input_pic_verify_code -code={value}"
-
-        elif step == "sms_code":
-            value = f"input_phone_verify_code -code={value}"
-
-        output = send(value)
-    else:
-        output = session.get("buffer", "")
-
-    step, message, css = detect(output)
-    session["step"] = step
-
-    return render_template_string(
-        PAGE,
-        step=step,
-        message=message,
-        css=css,
-        nonce=time.time()
-    )
+    return render_template_string(HTML)
 
 
-@app.get("/captcha")
+@app.route("/poll")
+def poll():
+    global history
+
+    with lock:
+        try:
+            connect()
+            history += read_socket()
+        except Exception as e:
+            history += f"\nConnection error: {e}\n"
+
+    return jsonify({
+        "output": history,
+        "captcha": os.path.exists(CAPTCHA)
+    })
+
+
+@app.post("/send")
+def send():
+    global history, sock
+
+    value = request.json.get("value", "")
+
+    with lock:
+        try:
+            connect()
+
+            sock.sendall((value + "\r\n").encode())
+
+            # Do not store passwords typed by user in history
+            if "please enter password" not in history.lower()[-200:]:
+                history += f">>> {value}\n"
+            else:
+                history += ">>> ********\n"
+
+            time.sleep(0.3)
+            history += read_socket()
+
+        except Exception as e:
+            history += f"\nError: {e}\n"
+            sock = None
+
+    return {"ok": True}
+
+
+@app.route("/captcha")
 def captcha():
     if not os.path.exists(CAPTCHA):
-        return "Captcha not available", 404
+        return "No captcha available", 404
 
     return send_file(CAPTCHA, mimetype="image/png")
-
-
-@app.post("/reset")
-def reset():
-    sid = session.get("sid")
-
-    if sid in connections:
-        try:
-            connections[sid].close()
-        except Exception:
-            pass
-
-        connections.pop(sid, None)
-
-    session.clear()
-    return redirect(url_for("index"))
 
 
 app.run(host="0.0.0.0", port=6789)
