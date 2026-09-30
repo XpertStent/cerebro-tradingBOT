@@ -54,19 +54,55 @@ class AIRunContextBuilder:
         }
 
     def _market_context(self):
-        states = opend.get_market_states()
+        raw = opend.get_market_states()
 
-        us = next(
-            (
-                item
-                for item in states
-                if str(
-                    item.get("market", "")
-                ).upper() == "US"
-            ),
-            None
-        )
+        #
+        # Normalize whatever shape OpenDClient returns.
+        #
+        if isinstance(raw, list):
+            states = raw
 
+        elif isinstance(raw, dict):
+            states = (
+                raw.get("markets")
+                or raw.get("states")
+                or raw.get("market_states")
+                or raw.get("data")
+                or []
+            )
+
+            if isinstance(states, dict):
+                states = [
+                    {
+                        "market": key,
+                        "state": value
+                    }
+                    for key, value in states.items()
+                ]
+
+        else:
+            states = []
+
+        us = None
+
+        for item in states:
+            if not isinstance(item, dict):
+                continue
+
+            market = str(
+                item.get("market")
+                or item.get("code")
+                or item.get("name")
+                or ""
+            ).upper()
+
+            if market == "US":
+                us = item
+                break
+
+        #
+        # Preserve raw US state if found.
+        #
         return {
             "market": "US",
             "timezone": "America/New_York",
@@ -152,6 +188,19 @@ class AIRunContextBuilder:
             ):
                 symbols.append(symbol)
 
+        #
+        # Pending orders are also relevant AI context.
+        #
+        for item in pending_orders:
+            symbol = item.get("symbol")
+
+            if (
+                symbol
+                and symbol.startswith("US.")
+                and symbol not in symbols
+            ):
+                symbols.append(symbol)
+
         symbols = symbols[
             :max_candidates
         ]
@@ -182,6 +231,12 @@ class AIRunContextBuilder:
 
             elif symbol in held_symbols:
                 relationship = "HELD"
+
+            elif any(
+                order.get("symbol") == symbol
+                for order in pending_orders
+            ):
+                relationship = "PENDING_ORDER"
 
             else:
                 relationship = "WATCHLIST"
