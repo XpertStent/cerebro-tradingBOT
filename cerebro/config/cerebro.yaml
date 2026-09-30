@@ -1,0 +1,20 @@
+cerebro:
+  name: Cerebro
+  port: 7000
+
+moomoo:
+  host: opend
+  port: 11111
+  health_check_symbol: US.AAPL
+
+market_data:
+  default_market: US
+
+trading:
+  enabled: false
+  mode: paper
+
+risk:
+  enabled: true
+  max_order_value: 1000
+  max_daily_loss: 250
