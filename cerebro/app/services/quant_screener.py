@@ -544,37 +544,12 @@ class QuantScreener:
             "market": "US",
 
             "method":
-                "MULTI_FACTOR_ENSEMBLE_V1",
+                "LOCAL_SNAPSHOT_MULTI_FACTOR_V2",
 
             "screens":
                 discovery[
                     "screens"
                 ],
-
-            "snapshot_eligible":
-                discovery[
-                    "snapshot_eligible"
-                ],
-
-            "discovery_selected":
-                discovery[
-                    "selected"
-                ],
-
-            "discovered_raw":
-                discovered_before_universe,
-
-            "universe_eligible":
-                len(candidates),
-
-            "universe_filtered":
-                (
-                    discovered_before_universe
-                    - len(candidates)
-                ),
-
-            "universe_rejected":
-                universe_rejected,
 
             "universe_source":
                 listing_universe[
@@ -591,8 +566,23 @@ class QuantScreener:
                     "sources"
                 ],
 
+            "snapshot_requested":
+                len(universe_symbols),
+
+            "snapshot_eligible":
+                discovery[
+                    "snapshot_eligible"
+                ],
+
             "discovered_unique":
-                len(candidates),
+                discovery[
+                    "discovered_unique"
+                ],
+
+            "discovery_selected":
+                discovery[
+                    "selected"
+                ],
 
             "snapshot_success":
                 len(snapshot_map),
