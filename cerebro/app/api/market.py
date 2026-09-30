@@ -7,6 +7,28 @@ router = APIRouter(
 )
 
 
+
+@router.get("/search")
+def search_market(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=25)
+):
+    try:
+        return {
+            "query": q,
+            "results": opend.search_symbols(
+                q,
+                limit=limit
+            )
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
+
+
 @router.get("/snapshots")
 def market_snapshots(
     symbols: str = Query(

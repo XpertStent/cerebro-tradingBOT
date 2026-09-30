@@ -2,7 +2,9 @@ from moomoo import (
     OpenQuoteContext,
     RET_OK,
     KLType,
-    AuType
+    AuType,
+    Market,
+    SecurityType
 )
 
 from app.config import config
@@ -320,6 +322,74 @@ class OpenDClient:
                 markets,
                 key=lambda x: x["id"]
             )
+
+        finally:
+            ctx.close()
+
+
+    def search_symbols(self, query: str, limit: int = 10):
+        query = query.strip().lower()
+
+        if not query:
+            return []
+
+        ctx = self._context()
+
+        try:
+            ret, data = ctx.get_stock_basicinfo(
+                Market.US,
+                SecurityType.STOCK
+            )
+
+            if ret != RET_OK:
+                raise RuntimeError(str(data))
+
+            matches = []
+
+            for _, row in data.iterrows():
+                code = str(row.get("code", ""))
+                name = str(row.get("name", ""))
+
+                code_tail = code.split(".")[-1]
+
+                score = None
+
+                if code_tail.lower() == query:
+                    score = 0
+                elif name.lower() == query:
+                    score = 1
+                elif code_tail.lower().startswith(query):
+                    score = 2
+                elif name.lower().startswith(query):
+                    score = 3
+                elif query in code_tail.lower():
+                    score = 4
+                elif query in name.lower():
+                    score = 5
+
+                if score is not None:
+                    matches.append({
+                        "symbol": code,
+                        "ticker": code_tail,
+                        "name": name,
+                        "_score": score
+                    })
+
+            matches.sort(
+                key=lambda x: (
+                    x["_score"],
+                    len(x["ticker"]),
+                    x["ticker"]
+                )
+            )
+
+            results = []
+
+            for item in matches[:limit]:
+                item.pop("_score", None)
+                results.append(item)
+
+            return results
 
         finally:
             ctx.close()

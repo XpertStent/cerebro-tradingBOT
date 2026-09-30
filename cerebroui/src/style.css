@@ -634,3 +634,74 @@ header p {
   }
 
 }
+
+.marketToolbar {
+  position: relative;
+}
+
+.searchSuggestions {
+  position: absolute;
+  z-index: 20;
+  top: 58px;
+  left: 0;
+
+  width: min(620px, 100%);
+  max-height: 360px;
+  overflow-y: auto;
+
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+
+  box-shadow:
+    0 12px 35px rgba(15, 23, 42, .14);
+}
+
+.searchSuggestions button {
+  width: 100%;
+  border: 0;
+  background: white;
+  padding: 12px 14px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  text-align: left;
+  cursor: pointer;
+
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.searchSuggestions button:last-child {
+  border-bottom: 0;
+}
+
+.searchSuggestions button:hover {
+  background: #f8fafc;
+}
+
+.searchSuggestions strong {
+  display: block;
+  font-size: 14px;
+}
+
+.searchSuggestions span {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.searchSuggestions small {
+  color: #94a3b8;
+}
+
+.searchingText {
+  position: absolute;
+  top: 65px;
+  left: 8px;
+
+  color: #94a3b8;
+  font-size: 11px;
+}

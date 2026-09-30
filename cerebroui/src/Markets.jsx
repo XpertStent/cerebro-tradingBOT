@@ -68,6 +68,12 @@ export default function Markets() {
   const [search, setSearch] =
     useState("AAPL");
 
+  const [suggestions, setSuggestions] =
+    useState([]);
+
+  const [searching, setSearching] =
+    useState(false);
+
   const [symbol, setSymbol] =
     useState("AAPL");
 
@@ -136,6 +142,8 @@ export default function Markets() {
 
     } catch (e) {
 
+      setQuote(null);
+      setCandles([]);
       setError(e.message);
 
     } finally {
@@ -165,6 +173,42 @@ export default function Markets() {
   }
 
 
+  async function runSearch(value) {
+
+    const q = value.trim();
+
+    if (!q) {
+      setSuggestions([]);
+      return;
+    }
+
+    setSearching(true);
+
+    try {
+
+      const r = await fetch(
+        `/api/market/search?q=${encodeURIComponent(q)}&limit=8`,
+        { cache: "no-store" }
+      );
+
+      if (!r.ok)
+        throw new Error("Search failed");
+
+      const d = await r.json();
+
+      setSuggestions(d.results || []);
+
+    } catch (_) {
+
+      setSuggestions([]);
+
+    } finally {
+
+      setSearching(false);
+    }
+  }
+
+
   function submitSearch(e) {
 
     e.preventDefault();
@@ -175,7 +219,27 @@ export default function Markets() {
     if (!value)
       return;
 
+    if (suggestions.length > 0) {
+      chooseSuggestion(
+        suggestions[0]
+      );
+      return;
+    }
+
     setSymbol(value);
+    setQuote(null);
+    setCandles([]);
+  }
+
+
+  function chooseSuggestion(item) {
+
+    setSearch(item.ticker);
+    setSymbol(item.symbol);
+
+    setQuote(null);
+    setCandles([]);
+    setSuggestions([]);
   }
 
 
@@ -228,9 +292,20 @@ export default function Markets() {
 
           <input
             value={search}
-            onChange={e =>
-              setSearch(e.target.value)
-            }
+            onChange={e => {
+              const value = e.target.value;
+              setSearch(value);
+
+              clearTimeout(
+                window.__cerebroSearchTimer
+              );
+
+              window.__cerebroSearchTimer =
+                setTimeout(
+                  () => runSearch(value),
+                  250
+                );
+            }}
             placeholder="Search symbol e.g. AAPL"
           />
 
@@ -239,6 +314,32 @@ export default function Markets() {
           </button>
 
         </form>
+
+        {suggestions.length > 0 && (
+          <div className="searchSuggestions">
+            {suggestions.map(item => (
+              <button
+                key={item.symbol}
+                onClick={() =>
+                  chooseSuggestion(item)
+                }
+              >
+                <div>
+                  <strong>{item.ticker}</strong>
+                  <span>{item.name}</span>
+                </div>
+
+                <small>{item.symbol}</small>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {searching && (
+          <div className="searchingText">
+            Searching…
+          </div>
+        )}
 
       </div>
 
