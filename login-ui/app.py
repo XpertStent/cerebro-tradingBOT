@@ -1,263 +1,289 @@
-from flask import Flask, request, jsonify, send_file, render_template_string, make_response
+from flask import Flask, render_template_string, send_file, jsonify, make_response
+from flask_sock import Sock
 import socket
-import threading
-import time
 import os
 
 app = Flask(__name__)
+sock = Sock(app)
 
-HOST = "opend"
-PORT = 22222
+OPEND_HOST = "opend"
+OPEND_PORT = 22222
 CAPTCHA = "/root/.com.moomoo.OpenD/F3CNN/PicVerifyCode.png"
 
-sock = None
-history = ""
-lock = threading.Lock()
-
-HTML = """
+HTML = r"""
 <!doctype html>
 <html>
 <head>
-<title>Moomoo OpenD Login</title>
+<meta charset="utf-8">
+<title>Moomoo OpenD</title>
 <style>
-body { font-family: Arial; max-width: 850px; margin: 40px auto; }
+body {
+    font-family: Arial, sans-serif;
+    max-width: 950px;
+    margin: 30px auto;
+    padding: 0 15px;
+}
 #terminal {
-    background:#111;
-    color:#eee;
-    padding:20px;
-    min-height:350px;
-    white-space:pre-wrap;
-    font-family:monospace;
-    overflow-y:auto;
+    background: #111;
+    color: #eee;
+    min-height: 420px;
+    max-height: 600px;
+    overflow-y: auto;
+    padding: 18px;
+    white-space: pre-wrap;
+    font-family: monospace;
+    font-size: 15px;
+}
+.row {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
 }
 input, button {
-    padding:12px;
-    font-size:16px;
-    box-sizing:border-box;
+    padding: 11px;
+    font-size: 15px;
+    box-sizing: border-box;
 }
-input { width:78%; }
-button { width:20%; }
+#command {
+    flex: 1;
+}
+button {
+    cursor: pointer;
+}
+.panel {
+    margin-top: 20px;
+    padding: 15px;
+    background: #f3f3f3;
+}
 #captcha {
-    margin:15px 0;
-    max-width:400px;
-    display:none;
+    display: none;
+    margin: 10px 0;
+    max-width: 350px;
+}
+.small {
+    font-size: 13px;
+    color: #555;
 }
 </style>
 </head>
+
 <body>
 
 <h2>Moomoo OpenD</h2>
 
-<pre id="terminal">Connecting...</pre>
+<div id="terminal">Connecting to OpenD...</div>
+
+<div class="row">
+    <input id="command"
+           type="text"
+           autocomplete="off"
+           placeholder="Enter account, password, Y/N, or OpenD command">
+    <button onclick="sendCommand()">Send</button>
+</div>
+
+<div class="small">
+Input is not echoed by this webpage. OpenD's own response is shown above.
+</div>
+
+<div class="panel">
+<h3>Graphic verification</h3>
+
+<button onclick="sendRaw('req_pic_verify_code')">
+Request / refresh image
+</button>
 
 <img id="captcha">
 
-<form id="form">
-    <input id="cmd" autocomplete="off" autofocus>
-    <button>Send</button>
-</form>
+<div class="row">
+    <input id="picCode" placeholder="Captcha code">
+    <button onclick="submitPic()">Submit captcha</button>
+</div>
+
+<div class="small">
+Equivalent command:
+<code>input_pic_verify_code -code=XXXX</code>
+</div>
+</div>
+
+<div class="panel">
+<h3>SMS verification</h3>
+
+<button onclick="sendRaw('req_phone_verify_code')">
+Request SMS code
+</button>
+
+<div class="row">
+    <input id="smsCode" placeholder="SMS verification code">
+    <button onclick="submitSms()">Submit SMS code</button>
+</div>
+
+<div class="small">
+Equivalent command:
+<code>input_phone_verify_code -code=123456</code>
+</div>
+</div>
 
 <script>
-let currentMode = "raw";
+let ws;
+let captchaMtime = 0;
 
-async function poll() {
-    const r = await fetch("/poll", {cache:"no-store"});
-    const d = await r.json();
+function connect() {
+    const protocol = location.protocol === "https:" ? "wss://" : "ws://";
+    ws = new WebSocket(protocol + location.host + "/ws");
 
-    currentMode = d.mode;
+    ws.onmessage = event => {
+        const terminal = document.getElementById("terminal");
+        terminal.textContent += event.data;
+        terminal.scrollTop = terminal.scrollHeight;
+    };
 
-    const terminal = document.getElementById("terminal");
-    terminal.textContent = d.output;
-    terminal.scrollTop = terminal.scrollHeight;
+    ws.onclose = () => {
+        const terminal = document.getElementById("terminal");
+        terminal.textContent += "\\n[Disconnected. Retrying...]\\n";
+        setTimeout(connect, 2000);
+    };
+}
 
-    const input = document.getElementById("cmd");
-    const img = document.getElementById("captcha");
-
-    if (d.mode === "password") {
-        input.type = "password";
-        input.placeholder = "Password";
-    } else if (d.mode === "account") {
-        input.type = "text";
-        input.placeholder = "Moomoo account/email";
-    } else if (d.mode === "remember") {
-        input.type = "text";
-        input.placeholder = "Y or N";
-    } else if (d.mode === "captcha") {
-        input.type = "text";
-        input.placeholder = "Enter captcha code";
-    } else if (d.mode === "sms") {
-        input.type = "text";
-        input.placeholder = "Enter SMS code";
-    } else {
-        input.type = "text";
-        input.placeholder = "Enter OpenD response/command";
-    }
-
-    if (d.mode === "captcha" && d.captcha) {
-        img.src = "/captcha?t=" + Date.now();
-        img.style.display = "block";
-    } else {
-        img.style.display = "none";
+function sendRaw(value) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(value);
     }
 }
 
-document.getElementById("form").onsubmit = async e => {
-    e.preventDefault();
+function sendCommand() {
+    const input = document.getElementById("command");
+    if (!input.value) return;
 
-    const input = document.getElementById("cmd");
-    let value = input.value.trim();
+    sendRaw(input.value);
 
-    if (!value) return;
-
-    if (currentMode === "captcha") {
-        value = "input_pic_verify_code -code=" + value;
-    } else if (currentMode === "sms") {
-        value = "input_phone_verify_code -code=" + value;
-    }
-
+    // Never display or retain submitted text in the browser UI.
     input.value = "";
+    input.focus();
+}
 
-    await fetch("/send", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({value})
-    });
+function submitPic() {
+    const input = document.getElementById("picCode");
+    if (!input.value) return;
 
-    poll();
-};
+    sendRaw("input_pic_verify_code -code=" + input.value.trim());
+    input.value = "";
+}
 
-setInterval(poll, 1000);
-poll();
+function submitSms() {
+    const input = document.getElementById("smsCode");
+    if (!input.value) return;
+
+    sendRaw("input_phone_verify_code -code=" + input.value.trim());
+    input.value = "";
+}
+
+document.getElementById("command").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+        e.preventDefault();
+        sendCommand();
+    }
+});
+
+async function refreshCaptcha() {
+    try {
+        const r = await fetch("/captcha-status?t=" + Date.now(), {
+            cache: "no-store"
+        });
+
+        const d = await r.json();
+        const img = document.getElementById("captcha");
+
+        if (d.exists) {
+            if (d.mtime !== captchaMtime) {
+                captchaMtime = d.mtime;
+                img.src = "/captcha?t=" + Date.now();
+            }
+
+            img.style.display = "block";
+        } else {
+            img.style.display = "none";
+        }
+    } catch (_) {}
+}
+
+connect();
+setInterval(refreshCaptcha, 1000);
+refreshCaptcha();
 </script>
 
 </body>
 </html>
 """
 
-def connect():
-    global sock, history
-
-    if sock:
-        return
-
-    sock = socket.create_connection((HOST, PORT), timeout=5)
-    sock.settimeout(0.2)
-    history += read_socket()
-
-def read_socket():
-    global sock
-    result = ""
-
-    if not sock:
-        return result
-
-    while True:
-        try:
-            data = sock.recv(8192)
-            if not data:
-                break
-            result += data.decode(errors="replace")
-        except socket.timeout:
-            break
-        except Exception:
-            break
-
-    return result
-
-def detect_mode(text):
-    t = text.lower()
-
-    if "please enter account" in t:
-        return "account"
-
-    if "please enter password" in t:
-        return "password"
-
-    if "remember the password" in t:
-        return "remember"
-
-    if "graphic verification code required" in t or "input_pic_verify_code" in t:
-        return "captcha"
-
-    if "sms verification code required" in t or "input_phone_verify_code" in t:
-        return "sms"
-
-    return "raw"
-
-def current_prompt_text():
-    # Look only at recent output so stale prompts don't win
-    recent = history[-1200:]
-    return recent
-
 @app.route("/")
 def index():
-    global history
-
-    with lock:
-        try:
-            connect()
-        except Exception as e:
-            history += f"Connection error: {e}\n"
-
     return render_template_string(HTML)
 
-@app.route("/poll")
-def poll():
-    global history, sock
 
-    with lock:
-        try:
-            connect()
-            history += read_socket()
-        except Exception as e:
-            history += f"\nConnection error: {e}\n"
-            sock = None
+@sock.route("/ws")
+def websocket(ws):
+    conn = socket.create_connection((OPEND_HOST, OPEND_PORT), timeout=10)
+    conn.settimeout(0.25)
 
-        recent = current_prompt_text()
-        mode = detect_mode(recent)
+    try:
+        # Send anything OpenD already has waiting.
+        while True:
+            try:
+                data = conn.recv(8192)
+                if not data:
+                    break
+                ws.send(data.decode("utf-8", errors="replace"))
+            except socket.timeout:
+                break
 
-    return jsonify({
-        "output": history,
-        "mode": mode,
-        "captcha": os.path.exists(CAPTCHA)
-    })
+        while True:
+            # Browser -> OpenD
+            try:
+                message = ws.receive(timeout=0.1)
+                if message is not None:
+                    conn.sendall((message + "\r\n").encode())
+            except TypeError:
+                # Compatibility with websocket implementations without timeout=
+                message = ws.receive()
+                if message is None:
+                    break
+                conn.sendall((message + "\r\n").encode())
 
-@app.post("/send")
-def send():
-    global history, sock
+            # OpenD -> Browser
+            try:
+                while True:
+                    data = conn.recv(8192)
+                    if not data:
+                        return
+                    ws.send(data.decode("utf-8", errors="replace"))
+            except socket.timeout:
+                pass
 
-    value = request.json.get("value", "")
+    finally:
+        conn.close()
 
-    with lock:
-        try:
-            connect()
-            sock.sendall((value + "\r\n").encode())
 
-            recent = current_prompt_text().lower()
+@app.route("/captcha-status")
+def captcha_status():
+    if not os.path.exists(CAPTCHA):
+        return jsonify(exists=False, mtime=0)
 
-            if "please enter password" in recent:
-                history += ">>> ********\n"
-            else:
-                history += f">>> {value}\n"
+    return jsonify(
+        exists=True,
+        mtime=os.path.getmtime(CAPTCHA)
+    )
 
-            time.sleep(0.3)
-            history += read_socket()
-
-        except Exception as e:
-            history += f"\nError: {e}\n"
-            sock = None
-
-    return {"ok": True}
 
 @app.route("/captcha")
 def captcha():
     if not os.path.exists(CAPTCHA):
-        return "No captcha available", 404
+        return "Captcha not available", 404
 
     response = make_response(send_file(CAPTCHA, mimetype="image/png"))
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
 
 app.run(host="0.0.0.0", port=6789)
