@@ -1622,3 +1622,198 @@ header p {
 .clickablePosition td:first-child strong {
   color: #2563eb;
 }
+
+/* ================================
+   Activity
+================================ */
+
+.activityToolbar {
+  display: flex;
+  gap: 9px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.activitySearch {
+  flex: 1;
+  min-width: 260px;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+
+  padding-left: 11px;
+}
+
+.activitySearch svg {
+  color: #94a3b8;
+}
+
+.activitySearch input {
+  flex: 1;
+  border: 0;
+  outline: none;
+  padding: 10px 5px;
+}
+
+.activityToolbar select,
+.activityRefresh {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+
+.activityRefresh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.activityPanel {
+  background: white;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.activityHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.activityHeader h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.activityHeader p {
+  margin: 5px 0 0;
+  color: #8490a2;
+  font-size: 12px;
+}
+
+.activityHeader > span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.activityEvent {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: 12px;
+
+  position: relative;
+  padding-bottom: 18px;
+}
+
+.activityEvent:not(:last-child)::before {
+  content: "";
+
+  position: absolute;
+  left: 4px;
+  top: 14px;
+  bottom: 0;
+
+  width: 1px;
+  background: #e5e7eb;
+}
+
+.activityDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-top: 5px;
+
+  background: #3b82f6;
+  z-index: 1;
+}
+
+.activityDot.warn {
+  background: #f59e0b;
+}
+
+.activityDot.error {
+  background: #ef4444;
+}
+
+.activityEventTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.activityEventTop > div {
+  min-width: 0;
+}
+
+.activityCategory {
+  display: inline-block;
+
+  margin-right: 8px;
+
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+
+  text-transform: uppercase;
+}
+
+.activityEventTop strong {
+  font-size: 13px;
+}
+
+.activityEventTop time {
+  flex-shrink: 0;
+
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.activityMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+
+  margin-top: 5px;
+}
+
+.activityMeta span {
+  background: #f1f5f9;
+  color: #64748b;
+
+  border-radius: 5px;
+  padding: 3px 6px;
+
+  font-size: 9px;
+}
+
+.activityEmpty {
+  min-height: 260px;
+
+  display: grid;
+  place-content: center;
+  text-align: center;
+
+  color: #94a3b8;
+}
+
+.activityEmpty p {
+  margin: 8px 0 0;
+}
+
+@media (max-width: 700px) {
+
+  .activityEventTop {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+}

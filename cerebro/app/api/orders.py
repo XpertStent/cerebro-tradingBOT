@@ -5,6 +5,7 @@ from app.config import config
 from app.services.trading import trading
 from app.services.opend import opend
 from app.services.risk import risk
+from app.services.activity import activity
 
 
 router = APIRouter(
@@ -86,7 +87,42 @@ def build_preview(order: OrderRequest):
 @router.post("/preview")
 def preview_order(order: OrderRequest):
     try:
-        return build_preview(order)
+        result = build_preview(order)
+
+        activity.write(
+            category="ORDER",
+            action="ORDER_PREVIEW",
+            message=(
+                f"Previewed {result['side']} "
+                f"{result['quantity']} "
+                f"{result['symbol']} "
+                f"for approximately "
+                f"${result['estimated_value']:,.2f}"
+            ),
+            symbol=result["symbol"]
+        )
+
+        activity.write(
+            category="RISK",
+            action=(
+                "RISK_APPROVED"
+                if result["approved"]
+                else "RISK_BLOCKED"
+            ),
+            level=(
+                "INFO"
+                if result["approved"]
+                else "WARN"
+            ),
+            message=(
+                "Order approved by risk engine"
+                if result["approved"]
+                else "Order blocked by risk engine"
+            ),
+            symbol=result["symbol"]
+        )
+
+        return result
 
     except HTTPException:
         raise
@@ -124,6 +160,36 @@ def execute_order(order: OrderRequest):
             quantity=preview["quantity"],
             order_type=preview["order_type"],
             price=order.price
+        )
+
+        activity.write(
+            category="ORDER",
+            action="ORDER_SUBMITTED",
+            message=(
+                f"Submitted PAPER "
+                f"{preview['side']} "
+                f"{preview['quantity']} "
+                f"{preview['symbol']}"
+            ),
+            symbol=preview["symbol"],
+            order_id=str(
+                result.get("order_id", "")
+            )
+        )
+
+        activity.write(
+            category="BROKER",
+            action="ORDER_ACCEPTED",
+            message=(
+                f"OpenD accepted order "
+                f"{result.get('order_id')} "
+                f"with status "
+                f"{result.get('status')}"
+            ),
+            symbol=preview["symbol"],
+            order_id=str(
+                result.get("order_id", "")
+            )
         )
 
         return {

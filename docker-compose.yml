@@ -37,6 +37,9 @@ services:
 
     network_mode: "service:opend"
 
+    volumes:
+      - cerebro-data:/data
+
     depends_on:
       - opend
 
@@ -53,4 +56,5 @@ services:
       - cerebro
 
 volumes:
+  cerebro-data:
   opend-state:

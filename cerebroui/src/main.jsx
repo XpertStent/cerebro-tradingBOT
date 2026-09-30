@@ -15,6 +15,7 @@ import "./style.css";
 import Markets from "./Markets";
 import Orders from "./Orders";
 import Portfolio from "./Portfolio";
+import Activity from "./Activity";
 
 const nav = [
   ["Dashboard", LayoutDashboard],
@@ -159,6 +160,8 @@ function App() {
           <Orders />
         ) : activePage === "Portfolio" ? (
           <Portfolio />
+        ) : activePage === "Activity / Logs" ? (
+          <Activity />
         ) : (
           <div className="placeholder">
             <h2>{activePage}</h2>
