@@ -247,7 +247,7 @@ class AIWebResearchService:
         self,
         cache_dir="/data/ai_research",
         ttl_seconds=3600,
-        max_workers=4,
+        max_workers=None,
     ):
         self.cache_dir = Path(
             cache_dir
@@ -264,6 +264,13 @@ class AIWebResearchService:
 
         self.max_workers = (
             max_workers
+            if max_workers is not None
+            else int(
+                os.getenv(
+                    "AI_RESEARCH_MAX_WORKERS",
+                    "12",
+                )
+            )
         )
 
         self.model = os.getenv(

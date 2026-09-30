@@ -40,6 +40,7 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_RESEARCH_MODEL: ${OPENAI_RESEARCH_MODEL:-gpt-5.5}
+      AI_RESEARCH_MAX_WORKERS: ${AI_RESEARCH_MAX_WORKERS:-12}
 
     volumes:
       - cerebro-data:/data

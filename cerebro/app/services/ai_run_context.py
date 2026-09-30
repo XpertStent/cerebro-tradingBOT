@@ -192,22 +192,48 @@ class AIRunContextBuilder:
                 )
 
         #
-        # Build candidate universe from:
+        # Build decision universe.
         #
-        # 1. every current holding
-        # 2. enabled US watchlist entries
+        # Mandatory:
+        #   1. current US holdings
+        #   2. pending US orders
+        #   3. all latest quant candidates
+        #
+        # Watchlist names only fill spare capacity.
         #
         symbols = []
 
-        for item in positions_raw:
-            symbol = item.get("symbol")
-
+        def add_symbol(symbol):
             if (
                 symbol
-                and symbol.startswith("US.")
+                and str(symbol).startswith("US.")
                 and symbol not in symbols
             ):
                 symbols.append(symbol)
+
+        for item in positions_raw:
+            add_symbol(
+                item.get("symbol")
+            )
+
+        for item in pending_orders:
+            add_symbol(
+                item.get("symbol")
+            )
+
+        for item in quant_candidates:
+            add_symbol(
+                item.get("symbol")
+            )
+
+        mandatory_count = len(symbols)
+
+        optional_slots = max(
+            0,
+            max_candidates - mandatory_count
+        )
+
+        optional_watch_symbols = []
 
         for item in watch_items:
             symbol = item.get("symbol")
@@ -215,40 +241,17 @@ class AIRunContextBuilder:
             if (
                 symbol
                 and symbol not in symbols
+                and symbol not in optional_watch_symbols
             ):
-                symbols.append(symbol)
+                optional_watch_symbols.append(
+                    symbol
+                )
 
-        #
-        # Pending orders are also relevant AI context.
-        #
-        for item in pending_orders:
-            symbol = item.get("symbol")
-
-            if (
-                symbol
-                and symbol.startswith("US.")
-                and symbol not in symbols
-            ):
-                symbols.append(symbol)
-
-        #
-        # Then append the latest quant Top N.
-        # Holdings/pending orders therefore cannot be
-        # displaced by quant candidates.
-        #
-        for item in quant_candidates:
-            symbol = item.get("symbol")
-
-            if (
-                symbol
-                and symbol.startswith("US.")
-                and symbol not in symbols
-            ):
-                symbols.append(symbol)
-
-        symbols = symbols[
-            :max_candidates
-        ]
+        symbols.extend(
+            optional_watch_symbols[
+                :optional_slots
+            ]
+        )
 
         held_symbols = {
             item.get("symbol")
@@ -414,12 +417,15 @@ class AIRunContextBuilder:
             ):
                 relationship = "PENDING_ORDER"
 
+            elif symbol in quant_symbols:
+                relationship = "QUANT_CANDIDATE"
+
             else:
                 relationship = "WATCHLIST"
 
             memory = (
                 ai_context
-                .build_symbol_context(
+                .build_memory_context(
                     symbol=symbol,
                     decision_limit=5,
                     rejection_limit=5
@@ -587,6 +593,16 @@ class AIRunContextBuilder:
 
                 "candidate_count":
                     len(candidates),
+
+                "mandatory_candidate_count":
+                    mandatory_count,
+
+                "optional_watchlist_count":
+                    max(
+                        0,
+                        len(candidates)
+                        - mandatory_count
+                    ),
             },
 
             "market_context":
