@@ -1,4 +1,5 @@
 services:
+
   opend:
     build: .
     container_name: moomoo-opend
@@ -9,8 +10,22 @@ services:
     ports:
       - "11111:11111"
 
+    expose:
+      - "22222"
+
     volumes:
       - opend-state:/root/.com.moomoo.OpenD/F3CNN
+
+  login-ui:
+    build: ./login-ui
+    container_name: moomoo-opend-login
+    restart: unless-stopped
+
+    ports:
+      - "6789:6789"
+
+    depends_on:
+      - opend
 
 volumes:
   opend-state:

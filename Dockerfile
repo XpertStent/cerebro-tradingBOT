@@ -19,3 +19,9 @@ RUN chmod +x /entrypoint.sh /opend/OpenD
 EXPOSE 11111
 
 ENTRYPOINT ["/entrypoint.sh"]
+
+# Enable OpenD internal control interface for login UI
+RUN sed -i \
+    's#.*<telnet_ip>127.0.0.1</telnet_ip>.*#<telnet_ip>0.0.0.0</telnet_ip>#; \
+     s#.*<telnet_port>22222</telnet_port>.*#<telnet_port>22222</telnet_port>#' \
+    /opend/OpenD.xml
