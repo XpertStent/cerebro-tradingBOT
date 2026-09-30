@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file, render_template_string
+from flask import Flask, request, jsonify, send_file, render_template_string, make_response
 import socket
 import threading
 import time
@@ -20,41 +20,37 @@ HTML = """
 <head>
 <title>Moomoo OpenD Login</title>
 <style>
-body {
-    font-family: Arial;
-    max-width: 850px;
-    margin: 40px auto;
-}
+body { font-family: Arial; max-width: 850px; margin: 40px auto; }
 #terminal {
-    background: #111;
-    color: #eee;
-    padding: 20px;
-    min-height: 350px;
-    white-space: pre-wrap;
-    font-family: monospace;
-    overflow-y: auto;
+    background:#111;
+    color:#eee;
+    padding:20px;
+    min-height:350px;
+    white-space:pre-wrap;
+    font-family:monospace;
+    overflow-y:auto;
 }
 input, button {
-    padding: 12px;
-    font-size: 16px;
-    box-sizing: border-box;
+    padding:12px;
+    font-size:16px;
+    box-sizing:border-box;
 }
-input { width: 78%; }
-button { width: 20%; }
+input { width:78%; }
+button { width:20%; }
 #captcha {
-    margin: 15px 0;
-    max-width: 400px;
+    margin:15px 0;
+    max-width:400px;
+    display:none;
 }
 </style>
 </head>
-
 <body>
 
 <h2>Moomoo OpenD</h2>
 
 <pre id="terminal">Connecting...</pre>
 
-<img id="captcha" style="display:none">
+<img id="captcha">
 
 <form id="form">
     <input id="cmd" autocomplete="off" autofocus>
@@ -62,8 +58,10 @@ button { width: 20%; }
 </form>
 
 <script>
+let captchaVisible = false;
+
 async function poll() {
-    const r = await fetch("/poll");
+    const r = await fetch("/poll", {cache:"no-store"});
     const d = await r.json();
 
     const terminal = document.getElementById("terminal");
@@ -71,19 +69,30 @@ async function poll() {
     terminal.scrollTop = terminal.scrollHeight;
 
     const input = document.getElementById("cmd");
+    const lower = d.output.toLowerCase();
 
-    if (d.output.toLowerCase().includes("please enter password")) {
+    if (lower.includes("please enter password")) {
         input.type = "password";
         input.placeholder = "Password";
+    } else if (lower.includes("graphic verification code")) {
+        input.type = "text";
+        input.placeholder = "Enter captcha code";
+    } else if (lower.includes("sms verification code")) {
+        input.type = "text";
+        input.placeholder = "Enter SMS code or command";
     } else {
         input.type = "text";
         input.placeholder = "Enter response or OpenD command";
     }
 
-    if (d.captcha) {
-        const img = document.getElementById("captcha");
-        img.src = "/captcha?" + Date.now();
+    captchaVisible = d.captcha;
+
+    const img = document.getElementById("captcha");
+    if (captchaVisible) {
+        img.src = "/captcha?t=" + Date.now();
         img.style.display = "block";
+    } else {
+        img.style.display = "none";
     }
 }
 
@@ -91,7 +100,21 @@ document.getElementById("form").onsubmit = async e => {
     e.preventDefault();
 
     const input = document.getElementById("cmd");
-    const value = input.value;
+    let value = input.value.trim();
+
+    if (!value) return;
+
+    const terminalText = document.getElementById("terminal").textContent.toLowerCase();
+
+    if (captchaVisible && !value.startsWith("input_pic_verify_code")) {
+        value = "input_pic_verify_code -code=" + value;
+    } else if (
+        terminalText.includes("sms verification code") &&
+        /^[0-9]{4,8}$/.test(value) &&
+        !value.startsWith("input_phone_verify_code")
+    ) {
+        value = "input_phone_verify_code -code=" + value;
+    }
 
     input.value = "";
 
@@ -120,13 +143,10 @@ def connect():
 
     sock = socket.create_connection((HOST, PORT), timeout=5)
     sock.settimeout(0.2)
-
     history += read_socket()
-
 
 def read_socket():
     global sock
-
     result = ""
 
     if not sock:
@@ -145,22 +165,19 @@ def read_socket():
 
     return result
 
-
 @app.route("/")
 def index():
+    global history
     with lock:
         try:
             connect()
         except Exception as e:
-            global history
             history += f"Connection error: {e}\n"
-
     return render_template_string(HTML)
-
 
 @app.route("/poll")
 def poll():
-    global history
+    global history, sock
 
     with lock:
         try:
@@ -168,12 +185,12 @@ def poll():
             history += read_socket()
         except Exception as e:
             history += f"\nConnection error: {e}\n"
+            sock = None
 
     return jsonify({
         "output": history,
         "captcha": os.path.exists(CAPTCHA)
     })
-
 
 @app.post("/send")
 def send():
@@ -184,14 +201,12 @@ def send():
     with lock:
         try:
             connect()
-
             sock.sendall((value + "\r\n").encode())
 
-            # Do not store passwords typed by user in history
-            if "please enter password" not in history.lower()[-200:]:
-                history += f">>> {value}\n"
-            else:
+            if "password" in history.lower()[-200:]:
                 history += ">>> ********\n"
+            else:
+                history += f">>> {value}\n"
 
             time.sleep(0.3)
             history += read_socket()
@@ -202,13 +217,15 @@ def send():
 
     return {"ok": True}
 
-
 @app.route("/captcha")
 def captcha():
     if not os.path.exists(CAPTCHA):
         return "No captcha available", 404
 
-    return send_file(CAPTCHA, mimetype="image/png")
-
+    response = make_response(send_file(CAPTCHA, mimetype="image/png"))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 app.run(host="0.0.0.0", port=6789)
