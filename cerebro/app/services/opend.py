@@ -195,7 +195,7 @@ class OpenDClient:
                 ctx.request_history_kline(
                     code=symbol,
                     ktype=self.TIMEFRAMES[timeframe],
-                    autype=AuType.QFQ,
+                    autype=AuType.NONE,
                     max_count=1000
                 )
             )

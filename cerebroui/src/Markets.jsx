@@ -55,12 +55,29 @@ function chartTime(value, timeframe) {
     return value.slice(0, 10);
   }
 
+  const [
+    datePart,
+    timePart = "00:00:00"
+  ] = value.split(" ");
+
+  const [year, month, day] =
+    datePart.split("-").map(Number);
+
+  const [hour, minute, second] =
+    timePart.split(":").map(Number);
+
   return Math.floor(
     new Date(
-      value.replace(" ", "T") + "Z"
+      year,
+      month - 1,
+      day,
+      hour,
+      minute,
+      second || 0
     ).getTime() / 1000
   );
 }
+
 
 
 export default function Markets() {
