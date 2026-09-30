@@ -6,6 +6,7 @@ from copy import deepcopy
 from app.services.ai_decision import ai_decision
 from app.services.ai_execution import ai_execution
 from app.services.ai_memory import ai_memory
+from app.services.ai_run_context import ai_run_context
 from app.services.latest_ai_decision import latest_ai_decision
 from app.services.latest_quant import latest_quant
 from app.services.quant_screener import quant_screener
@@ -59,6 +60,14 @@ class AIDecisionJobManager:
                 "processed": 0,
                 "total": 0,
                 "current_symbol": None,
+                "message": "Not started",
+            },
+            "ai": {
+                "stage": "QUEUED",
+                "candidate_count": 0,
+                "research_request_count": 0,
+                "research_ready": 0,
+                "research_errors": 0,
                 "message": "Not started",
             },
             "result": None,
@@ -135,11 +144,52 @@ class AIDecisionJobManager:
                         if enrich_research
                         else "Building portfolio decision context"
                     ),
+                    ai={
+                        "stage": "RESEARCH_AND_CONTEXT",
+                        "candidate_count": len(quant_result.get("candidates") or []),
+                        "research_request_count": 0,
+                        "research_ready": 0,
+                        "research_errors": 0,
+                        "message": "Preparing AI decision context",
+                    },
+                )
+
+                context = ai_run_context.build(
+                    run_type=run_type,
+                    enrich_research=enrich_research,
+                )
+                research_candidates = [
+                    item for item in (context.get("candidates") or [])
+                    if item.get("research_context") is not None
+                ]
+                research_ready = sum(
+                    1 for item in research_candidates
+                    if (item.get("research_context") or {}).get("status") == "READY"
+                )
+                research_errors = sum(
+                    1 for item in research_candidates
+                    if (item.get("research_context") or {}).get("status") == "ERROR"
+                )
+
+                self.update(
+                    run_id,
+                    stage="DECISION_MODEL",
+                    percent=82.0,
+                    message="Generating structured portfolio decisions",
+                    ai={
+                        "stage": "DECISION_MODEL",
+                        "candidate_count": len(context.get("candidates") or []),
+                        "research_request_count": context.get("run", {}).get("research_request_count", 0),
+                        "research_ready": research_ready,
+                        "research_errors": research_errors,
+                        "message": "Research/context complete; decision model running",
+                    },
                 )
 
                 decision_bundle = ai_decision.run(
                     run_type=run_type,
                     enrich_research=enrich_research,
+                    context=context,
                 )
 
                 self.update(
@@ -147,10 +197,18 @@ class AIDecisionJobManager:
                     stage="RISK_PROPOSALS",
                     percent=88.0,
                     message="Converting AI intents into deterministic order proposals",
+                    ai={
+                        "stage": "DECISION_COMPLETE",
+                        "candidate_count": len(context.get("candidates") or []),
+                        "research_request_count": context.get("run", {}).get("research_request_count", 0),
+                        "research_ready": research_ready,
+                        "research_errors": research_errors,
+                        "message": "Decision model complete",
+                    },
                 )
 
                 proposal_bundle = ai_execution.build(
-                    context=decision_bundle["context"],
+                    context=context,
                     decision_result=decision_bundle["decision"],
                     memory_run_id=None,
                 )
