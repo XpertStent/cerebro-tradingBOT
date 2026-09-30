@@ -13,6 +13,7 @@ from app.services.market_metrics import (
     market_metrics
 )
 from app.services.market_series import market_series
+from app.services.universe import universe_service
 from app.services.opend import opend
 
 
@@ -178,6 +179,77 @@ class QuantScreener:
 
         candidates = list(
             universe.values()
+        )
+
+        #
+        # Refresh authoritative exchange-listed
+        # universe on every quant scan.
+        #
+        discovered_before_universe = len(
+            candidates
+        )
+
+        self._progress(
+            progress_callback,
+            stage="UNIVERSE_REFRESH",
+            processed=0,
+            total=2,
+            current_symbol=None,
+            message=(
+                "Refreshing Nasdaq Trader "
+                "symbol directories"
+            )
+        )
+
+        listing_universe = (
+            universe_service.refresh()
+        )
+
+        eligible_symbols = set(
+            listing_universe[
+                "eligible"
+            ].keys()
+        )
+
+        universe_rejected = []
+
+        eligible_candidates = []
+
+        for item in candidates:
+            symbol = item.get(
+                "symbol"
+            )
+
+            if symbol in eligible_symbols:
+                eligible_candidates.append(
+                    item
+                )
+            else:
+                universe_rejected.append(
+                    symbol
+                )
+
+        candidates = eligible_candidates
+
+        self._progress(
+            progress_callback,
+            stage="UNIVERSE_FILTER",
+            discovered=(
+                discovered_before_universe
+            ),
+            processed=len(
+                candidates
+            ),
+            total=(
+                discovered_before_universe
+            ),
+            current_symbol=None,
+            message=(
+                f"Universe filter: "
+                f"{len(candidates)} eligible / "
+                f"{discovered_before_universe} "
+                f"discovered"
+            )
         )
 
         #
@@ -634,6 +706,36 @@ class QuantScreener:
                     for name, items
                     in pools.items()
                 },
+
+            "discovered_raw":
+                discovered_before_universe,
+
+            "universe_eligible":
+                len(candidates),
+
+            "universe_filtered":
+                (
+                    discovered_before_universe
+                    - len(candidates)
+                ),
+
+            "universe_rejected":
+                universe_rejected,
+
+            "universe_source":
+                listing_universe[
+                    "source"
+                ],
+
+            "universe_size":
+                listing_universe[
+                    "eligible_count"
+                ],
+
+            "universe_sources":
+                listing_universe[
+                    "sources"
+                ],
 
             "discovered_unique":
                 len(candidates),
