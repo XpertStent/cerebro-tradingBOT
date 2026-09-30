@@ -3,7 +3,7 @@ cerebro:
   port: 7000
 
 moomoo:
-  host: opend
+  host: 127.0.0.1
   port: 11111
   health_check_symbol: US.AAPL
 
