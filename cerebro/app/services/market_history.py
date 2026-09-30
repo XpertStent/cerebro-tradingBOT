@@ -463,7 +463,7 @@ class MarketHistoryStore:
         # the historical API.
         #
         if (
-            existing >= minimum_bars
+            existing > 0
             and self._synced_today(sync)
         ):
             return {
