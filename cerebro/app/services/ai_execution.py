@@ -82,14 +82,16 @@ class AIExecutionService:
         positions = self._position_map(context)
         candidates = self._candidate_map(context)
         total_value = float(account.get("total_value") or 0)
-        cash = float(account.get("cash") or 0)
-        market_value = float(account.get("market_value") or 0)
+        starting_cash = float(account.get("cash") or 0)
+        starting_market_value = float(account.get("market_value") or 0)
 
         if total_value <= 0:
             raise RuntimeError("Portfolio total value is unavailable; cannot size AI orders")
 
         max_new_positions = int(settings.get("risk.max_new_positions_per_run"))
         new_positions_used = 0
+        projected_cash = starting_cash
+        projected_market_value = starting_market_value
         proposals = []
 
         for raw in decision_result.get("decisions") or []:
@@ -183,26 +185,25 @@ class AIExecutionService:
                 proposals.append(proposal)
                 continue
 
-            if action == "BUY":
-                if new_positions_used >= max_new_positions:
-                    proposal["status"] = "BLOCKED"
-                    proposal["message"] = f"Maximum new positions per run ({max_new_positions}) reached"
-                    ai_memory.set_execution_result(
-                        record["id"],
-                        status="REJECTED",
-                        rejection_code="MAX_NEW_POSITIONS",
-                        rejection_reason=proposal["message"],
-                    )
-                    proposals.append(proposal)
-                    continue
-                new_positions_used += 1
+            if action == "BUY" and new_positions_used >= max_new_positions:
+                proposal["status"] = "BLOCKED"
+                proposal["message"] = f"Maximum new positions per run ({max_new_positions}) reached"
+                ai_memory.set_execution_result(
+                    record["id"],
+                    status="REJECTED",
+                    rejection_code="MAX_NEW_POSITIONS",
+                    rejection_reason=proposal["message"],
+                )
+                proposals.append(proposal)
+                continue
 
+            order_type = str(settings.get("execution.default_order_type") or "MARKET").upper()
             order = {
                 "symbol": symbol,
                 "side": side,
                 "quantity": quantity,
-                "order_type": str(settings.get("execution.default_order_type")),
-                "price": None,
+                "order_type": order_type,
+                "price": price if order_type == "LIMIT" else None,
                 "estimated_price": price,
             }
             metrics = ((candidate.get("quant") or {}).get("metrics") or {})
@@ -214,8 +215,8 @@ class AIExecutionService:
                 quantity=quantity,
                 estimated_price=price,
                 portfolio_total=total_value,
-                portfolio_cash=cash,
-                portfolio_market_value=market_value,
+                portfolio_cash=projected_cash,
+                portfolio_market_value=projected_market_value,
                 current_position_value=current_value,
                 median_turnover_60d=metrics.get("median_turnover_60d"),
             )
@@ -236,12 +237,27 @@ class AIExecutionService:
                 proposal["message"] = "Ready for manual approval"
                 ai_memory.set_execution_result(record["id"], status="DEFERRED")
 
+                reserved_value = float(risk_result.get("estimated_value") or 0)
+                if side == "BUY":
+                    projected_cash -= reserved_value
+                    projected_market_value += reserved_value
+                else:
+                    projected_cash += reserved_value
+                    projected_market_value = max(0.0, projected_market_value - reserved_value)
+
+                if action == "BUY":
+                    new_positions_used += 1
+
             proposals.append(proposal)
 
         return {
             "auto_execute": settings.get_bool("execution.auto_execute"),
             "proposals": proposals,
             "persisted_decision_count": len(proposals),
+            "projected_portfolio": {
+                "cash": round(projected_cash, 2),
+                "market_value": round(projected_market_value, 2),
+            },
         }
 
     def execute(self, proposal):
