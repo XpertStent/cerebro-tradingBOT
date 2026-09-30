@@ -327,57 +327,126 @@ class OpenDClient:
             ctx.close()
 
 
-    def search_symbols(self, query: str, limit: int = 10):
+    def search_symbols(
+        self,
+        query: str,
+        markets: list[str] | None = None,
+        limit: int = 20
+    ):
         query = query.strip().lower()
 
         if not query:
             return []
 
+        market_map = {
+            "US": Market.US,
+            "HK": Market.HK,
+            "SH": Market.SH,
+            "SZ": Market.SZ,
+            "SG": Market.SG,
+            "MY": Market.MY,
+            "JP": Market.JP,
+        }
+
+        if not markets:
+            markets = list(market_map.keys())
+
+        selected = [
+            m.upper()
+            for m in markets
+            if m.upper() in market_map
+        ]
+
         ctx = self._context()
 
         try:
-            ret, data = ctx.get_stock_basicinfo(
-                Market.US,
-                SecurityType.STOCK
-            )
-
-            if ret != RET_OK:
-                raise RuntimeError(str(data))
-
             matches = []
 
-            for _, row in data.iterrows():
-                code = str(row.get("code", ""))
-                name = str(row.get("name", ""))
+            for market_id in selected:
 
-                code_tail = code.split(".")[-1]
+                market_enum = market_map[market_id]
 
-                score = None
+                # Search both equities and ETFs where supported.
+                security_types = [
+                    SecurityType.STOCK,
+                    SecurityType.ETF
+                ]
 
-                if code_tail.lower() == query:
-                    score = 0
-                elif name.lower() == query:
-                    score = 1
-                elif code_tail.lower().startswith(query):
-                    score = 2
-                elif name.lower().startswith(query):
-                    score = 3
-                elif query in code_tail.lower():
-                    score = 4
-                elif query in name.lower():
-                    score = 5
+                for security_type in security_types:
 
-                if score is not None:
-                    matches.append({
-                        "symbol": code,
-                        "ticker": code_tail,
-                        "name": name,
-                        "_score": score
-                    })
+                    try:
+                        ret, data = ctx.get_stock_basicinfo(
+                            market_enum,
+                            security_type
+                        )
+
+                        if ret != RET_OK:
+                            continue
+
+                    except Exception:
+                        # Some market/security-type combinations
+                        # are not supported by OpenD.
+                        continue
+
+                    for _, row in data.iterrows():
+
+                        code = str(row.get("code", ""))
+                        name = str(row.get("name", ""))
+
+                        if not code:
+                            continue
+
+                        ticker = code.split(".")[-1]
+
+                        q = query
+                        ticker_lower = ticker.lower()
+                        name_lower = name.lower()
+
+                        score = None
+
+                        if ticker_lower == q:
+                            score = 0
+                        elif name_lower == q:
+                            score = 1
+                        elif ticker_lower.startswith(q):
+                            score = 2
+                        elif name_lower.startswith(q):
+                            score = 3
+                        elif q in ticker_lower:
+                            score = 4
+                        elif q in name_lower:
+                            score = 5
+
+                        if score is None:
+                            continue
+
+                        matches.append({
+                            "symbol": code,
+                            "ticker": ticker,
+                            "name": name,
+                            "market": market_id,
+                            "security_type": str(security_type),
+                            "_score": score
+                        })
+
+            # Remove duplicates
+            unique = {}
+
+            for item in matches:
+                key = item["symbol"]
+
+                if (
+                    key not in unique
+                    or item["_score"] < unique[key]["_score"]
+                ):
+                    unique[key] = item
+
+            matches = list(unique.values())
 
             matches.sort(
                 key=lambda x: (
                     x["_score"],
+                    x["market"],
                     len(x["ticker"]),
                     x["ticker"]
                 )

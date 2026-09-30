@@ -11,13 +11,25 @@ router = APIRouter(
 @router.get("/search")
 def search_market(
     q: str = Query(..., min_length=1),
-    limit: int = Query(10, ge=1, le=25)
+    markets: str = Query(
+        "US,HK,SH,SZ,SG,MY,JP",
+        description="Comma-separated market codes"
+    ),
+    limit: int = Query(20, ge=1, le=50)
 ):
     try:
+        selected_markets = [
+            market.strip().upper()
+            for market in markets.split(",")
+            if market.strip()
+        ]
+
         return {
             "query": q,
+            "markets": selected_markets,
             "results": opend.search_symbols(
                 q,
+                markets=selected_markets,
                 limit=limit
             )
         }

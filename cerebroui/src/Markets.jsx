@@ -13,6 +13,8 @@ import {
 
 import {
   Search,
+  SlidersHorizontal,
+  X,
   CandlestickChart,
   ChartNoAxesCombined
 } from "lucide-react";
@@ -26,6 +28,17 @@ const TIMEFRAMES = [
   ["60m", "1H"],
   ["1d", "1D"],
   ["1w", "1W"]
+];
+
+
+const MARKET_OPTIONS = [
+  ["US", "United States"],
+  ["HK", "Hong Kong"],
+  ["SH", "Shanghai"],
+  ["SZ", "Shenzhen"],
+  ["SG", "Singapore"],
+  ["MY", "Malaysia"],
+  ["JP", "Japan"]
 ];
 
 
@@ -79,20 +92,23 @@ function chartTime(value, timeframe) {
 }
 
 
+function humanState(state) {
+
+  if (!state)
+    return "UNKNOWN";
+
+  return String(state)
+    .replaceAll("_", " ");
+}
+
 
 export default function Markets() {
 
   const [search, setSearch] =
-    useState("AAPL");
-
-  const [suggestions, setSuggestions] =
-    useState([]);
-
-  const [searching, setSearching] =
-    useState(false);
+    useState("");
 
   const [symbol, setSymbol] =
-    useState("AAPL");
+    useState(null);
 
   const [quote, setQuote] =
     useState(null);
@@ -102,6 +118,26 @@ export default function Markets() {
 
   const [markets, setMarkets] =
     useState([]);
+
+  const [selectedMarkets, setSelectedMarkets] =
+    useState([
+      "US",
+      "HK",
+      "SH",
+      "SZ",
+      "SG",
+      "MY",
+      "JP"
+    ]);
+
+  const [showMarketFilter, setShowMarketFilter] =
+    useState(false);
+
+  const [suggestions, setSuggestions] =
+    useState([]);
+
+  const [searching, setSearching] =
+    useState(false);
 
   const [timeframe, setTimeframe] =
     useState("1d");
@@ -119,7 +155,57 @@ export default function Markets() {
     useState(null);
 
 
-  async function loadSymbol(target = symbol) {
+  async function runSearch(value) {
+
+    const q = value.trim();
+
+    if (!q) {
+      setSuggestions([]);
+      return;
+    }
+
+    if (!selectedMarkets.length) {
+      setSuggestions([]);
+      return;
+    }
+
+    setSearching(true);
+
+    try {
+
+      const marketParam =
+        selectedMarkets.join(",");
+
+      const r = await fetch(
+        `/api/market/search?q=${encodeURIComponent(q)}&markets=${encodeURIComponent(marketParam)}&limit=20`,
+        { cache: "no-store" }
+      );
+
+      if (!r.ok)
+        throw new Error("Search failed");
+
+      const d =
+        await r.json();
+
+      setSuggestions(
+        d.results || []
+      );
+
+    } catch (_) {
+
+      setSuggestions([]);
+
+    } finally {
+
+      setSearching(false);
+    }
+  }
+
+
+  async function loadSymbol(target) {
+
+    if (!target)
+      return;
 
     setLoading(true);
     setError(null);
@@ -182,47 +268,60 @@ export default function Markets() {
       if (!r.ok)
         return;
 
-      const d = await r.json();
+      const d =
+        await r.json();
 
-      setMarkets(d.markets || []);
+      setMarkets(
+        d.markets || []
+      );
 
     } catch (_) {}
   }
 
 
-  async function runSearch(value) {
+  function chooseSuggestion(item) {
 
-    const q = value.trim();
+    setSearch(
+      `${item.ticker} — ${item.name}`
+    );
 
-    if (!q) {
-      setSuggestions([]);
-      return;
-    }
+    setSymbol(item.symbol);
 
-    setSearching(true);
+    setSuggestions([]);
+    setShowMarketFilter(false);
 
-    try {
+    setQuote(null);
+    setCandles([]);
+  }
 
-      const r = await fetch(
-        `/api/market/search?q=${encodeURIComponent(q)}&limit=8`,
-        { cache: "no-store" }
-      );
 
-      if (!r.ok)
-        throw new Error("Search failed");
+  function clearSecurity() {
 
-      const d = await r.json();
+    setSearch("");
+    setSymbol(null);
+    setQuote(null);
+    setCandles([]);
+    setSuggestions([]);
+    setError(null);
+  }
 
-      setSuggestions(d.results || []);
 
-    } catch (_) {
+  function toggleMarket(id) {
 
-      setSuggestions([]);
+    setSelectedMarkets(current => {
 
-    } finally {
+      if (current.includes(id)) {
 
-      setSearching(false);
-    }
+        return current.filter(
+          item => item !== id
+        );
+      }
+
+      return [
+        ...current,
+        id
+      ];
+    });
   }
 
 
@@ -230,39 +329,26 @@ export default function Markets() {
 
     e.preventDefault();
 
-    const value =
-      search.trim().toUpperCase();
-
-    if (!value)
-      return;
-
-    if (suggestions.length > 0) {
+    if (suggestions.length) {
       chooseSuggestion(
         suggestions[0]
       );
       return;
     }
 
-    setSymbol(value);
-    setQuote(null);
-    setCandles([]);
-  }
-
-
-  function chooseSuggestion(item) {
-
-    setSearch(item.ticker);
-    setSymbol(item.symbol);
-
-    setQuote(null);
-    setCandles([]);
-    setSuggestions([]);
+    runSearch(search);
   }
 
 
   useEffect(() => {
-    loadSymbol(symbol);
-  }, [symbol, timeframe]);
+
+    if (symbol)
+      loadSymbol(symbol);
+
+  }, [
+    symbol,
+    timeframe
+  ]);
 
 
   useEffect(() => {
@@ -270,7 +356,10 @@ export default function Markets() {
     loadMarkets();
 
     const timer =
-      setInterval(loadMarkets, 10000);
+      setInterval(
+        loadMarkets,
+        10000
+      );
 
     return () =>
       clearInterval(timer);
@@ -305,12 +394,15 @@ export default function Markets() {
           onSubmit={submitSearch}
         >
 
-          <Search size={18} />
+          <Search size={18}/>
 
           <input
             value={search}
             onChange={e => {
-              const value = e.target.value;
+
+              const value =
+                e.target.value;
+
               setSearch(value);
 
               clearTimeout(
@@ -323,247 +415,425 @@ export default function Markets() {
                   250
                 );
             }}
-            placeholder="Search symbol e.g. AAPL"
+            placeholder="Search ticker or company name"
           />
 
-          <button type="submit">
+
+          {symbol && (
+
+            <button
+              type="button"
+              className="clearSearchButton"
+              onClick={clearSecurity}
+              title="Clear search"
+            >
+              <X size={17}/>
+            </button>
+
+          )}
+
+
+          <button
+            type="button"
+            className="filterButton"
+            onClick={() =>
+              setShowMarketFilter(
+                !showMarketFilter
+              )
+            }
+          >
+            <SlidersHorizontal size={17}/>
+            Markets
+          </button>
+
+
+          <button
+            type="submit"
+            className="searchButton"
+          >
             Search
           </button>
 
         </form>
 
+
+        {showMarketFilter && (
+
+          <div className="marketFilterPanel">
+
+            <div className="marketFilterTitle">
+              Search markets
+            </div>
+
+            {MARKET_OPTIONS.map(
+              ([id, name]) => (
+
+                <label
+                  key={id}
+                  className="marketFilterOption"
+                >
+
+                  <input
+                    type="checkbox"
+                    checked={
+                      selectedMarkets.includes(id)
+                    }
+                    onChange={() =>
+                      toggleMarket(id)
+                    }
+                  />
+
+                  <span>
+                    <strong>{id}</strong>
+                    {name}
+                  </span>
+
+                </label>
+
+              )
+            )}
+
+            <div className="marketFilterActions">
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedMarkets(
+                    MARKET_OPTIONS.map(
+                      item => item[0]
+                    )
+                  )
+                }
+              >
+                Select all
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedMarkets([])
+                }
+              >
+                Clear
+              </button>
+
+            </div>
+
+          </div>
+
+        )}
+
+
         {suggestions.length > 0 && (
+
           <div className="searchSuggestions">
+
             {suggestions.map(item => (
+
               <button
                 key={item.symbol}
                 onClick={() =>
                   chooseSuggestion(item)
                 }
               >
-                <div>
-                  <strong>{item.ticker}</strong>
-                  <span>{item.name}</span>
+
+                <div className="suggestionMain">
+
+                  <strong>
+                    {item.ticker}
+                  </strong>
+
+                  <span>
+                    {item.name}
+                  </span>
+
                 </div>
 
-                <small>{item.symbol}</small>
+
+                <div className="suggestionMarket">
+
+                  <span>
+                    {item.market}
+                  </span>
+
+                  <small>
+                    {item.symbol}
+                  </small>
+
+                </div>
+
               </button>
+
             ))}
+
           </div>
+
         )}
 
+
         {searching && (
+
           <div className="searchingText">
             Searching…
           </div>
+
         )}
 
       </div>
 
 
-      <section className="marketQuotePanel">
+      {symbol && quote && (
 
-        <div>
+        <>
 
-          <div className="quoteIdentity">
+          <section className="marketQuotePanel">
 
-            <h2>
-              {quote?.symbol || symbol}
-            </h2>
+            <div>
 
-            <span>
-              {quote?.name || ""}
-            </span>
+              <div className="quoteIdentity">
 
-          </div>
+                <h2>
+                  {quote.symbol}
+                </h2>
+
+                <span>
+                  {quote.name}
+                </span>
+
+              </div>
 
 
-          <div className="quotePrice">
+              <div className="quotePrice">
 
-            ${formatPrice(quote?.price)}
+                ${formatPrice(
+                  quote.price
+                )}
 
-            {changePct !== null && (
+                {changePct !== null && (
 
-              <span
-                className={
-                  changePct >= 0
-                    ? "positive"
-                    : "negative"
+                  <span
+                    className={
+                      changePct >= 0
+                        ? "positive"
+                        : "negative"
+                    }
+                  >
+                    {changePct >= 0
+                      ? "+"
+                      : ""}
+
+                    {changePct.toFixed(2)}%
+                  </span>
+
+                )}
+
+              </div>
+
+            </div>
+
+
+            <div className="quoteStats">
+
+              <QuoteStat
+                label="Open"
+                value={formatPrice(
+                  quote.open
+                )}
+              />
+
+              <QuoteStat
+                label="High"
+                value={formatPrice(
+                  quote.high
+                )}
+              />
+
+              <QuoteStat
+                label="Low"
+                value={formatPrice(
+                  quote.low
+                )}
+              />
+
+              <QuoteStat
+                label="Prev close"
+                value={formatPrice(
+                  quote.previous_close
+                )}
+              />
+
+              <QuoteStat
+                label="Volume"
+                value={
+                  quote.volume
+                    ? Number(
+                        quote.volume
+                      ).toLocaleString()
+                    : "—"
                 }
-              >
-                {changePct >= 0 ? "+" : ""}
-                {changePct.toFixed(2)}%
-              </span>
+              />
 
-            )}
+            </div>
 
-          </div>
-
-        </div>
+          </section>
 
 
-        <div className="quoteStats">
+          <section className="chartPanel">
 
-          <QuoteStat
-            label="Open"
-            value={formatPrice(quote?.open)}
-          />
+            <div className="chartToolbar">
 
-          <QuoteStat
-            label="High"
-            value={formatPrice(quote?.high)}
-          />
+              <div className="timeframeButtons">
 
-          <QuoteStat
-            label="Low"
-            value={formatPrice(quote?.low)}
-          />
+                {TIMEFRAMES.map(
+                  ([value, label]) => (
 
-          <QuoteStat
-            label="Prev close"
-            value={formatPrice(
-              quote?.previous_close
-            )}
-          />
+                    <button
+                      key={value}
+                      className={
+                        timeframe === value
+                          ? "selected"
+                          : ""
+                      }
+                      onClick={() =>
+                        setTimeframe(value)
+                      }
+                    >
+                      {label}
+                    </button>
 
-          <QuoteStat
-            label="Volume"
-            value={
-              quote?.volume
-                ? Number(
-                    quote.volume
-                  ).toLocaleString()
-                : "—"
-            }
-          />
+                  )
+                )}
 
-        </div>
-
-      </section>
+              </div>
 
 
-      <section className="chartPanel">
-
-        <div className="chartToolbar">
-
-          <div className="timeframeButtons">
-
-            {TIMEFRAMES.map(
-              ([value, label]) => (
+              <div className="chartControls">
 
                 <button
-                  key={value}
                   className={
-                    timeframe === value
+                    chartType === "candles"
                       ? "selected"
                       : ""
                   }
                   onClick={() =>
-                    setTimeframe(value)
+                    setChartType(
+                      "candles"
+                    )
                   }
                 >
-                  {label}
+                  <CandlestickChart size={17}/>
+                  Candles
                 </button>
 
-              )
-            )}
 
-          </div>
-
-
-          <div className="chartControls">
-
-            <button
-              className={
-                chartType === "candles"
-                  ? "selected"
-                  : ""
-              }
-              onClick={() =>
-                setChartType("candles")
-              }
-              title="Candlestick chart"
-            >
-              <CandlestickChart size={17}/>
-              Candles
-            </button>
+                <button
+                  className={
+                    chartType === "line"
+                      ? "selected"
+                      : ""
+                  }
+                  onClick={() =>
+                    setChartType(
+                      "line"
+                    )
+                  }
+                >
+                  <ChartNoAxesCombined size={17}/>
+                  Line
+                </button>
 
 
-            <button
-              className={
-                chartType === "line"
-                  ? "selected"
-                  : ""
-              }
-              onClick={() =>
-                setChartType("line")
-              }
-              title="Line chart"
-            >
-              <ChartNoAxesCombined size={17}/>
-              Line
-            </button>
+                <label className="volumeToggle">
+
+                  <input
+                    type="checkbox"
+                    checked={showVolume}
+                    onChange={e =>
+                      setShowVolume(
+                        e.target.checked
+                      )
+                    }
+                  />
+
+                  Volume
+
+                </label>
+
+              </div>
+
+            </div>
 
 
-            <label className="volumeToggle">
+            {error ? (
 
-              <input
-                type="checkbox"
-                checked={showVolume}
-                onChange={e =>
-                  setShowVolume(
-                    e.target.checked
-                  )
-                }
+              <div className="chartError">
+                {error}
+              </div>
+
+            ) : (
+
+              <PriceChart
+                candles={candles}
+                timeframe={timeframe}
+                chartType={chartType}
+                showVolume={showVolume}
               />
 
-              Volume
+            )}
 
-            </label>
 
-          </div>
+            {loading && (
+
+              <div className="chartLoading">
+                Loading market data…
+              </div>
+
+            )}
+
+          </section>
+
+        </>
+
+      )}
+
+
+      {!symbol && (
+
+        <div className="marketLanding">
+
+          <h2>
+            Market Sessions
+          </h2>
+
+          <p>
+            Search for a security above to open
+            quote details and charts.
+          </p>
 
         </div>
 
-
-        {error ? (
-
-          <div className="chartError">
-            {error}
-          </div>
-
-        ) : (
-
-          <PriceChart
-            candles={candles}
-            timeframe={timeframe}
-            chartType={chartType}
-            showVolume={showVolume}
-          />
-
-        )}
-
-        {loading && (
-          <div className="chartLoading">
-            Loading market data…
-          </div>
-        )}
-
-      </section>
+      )}
 
 
       <section className="marketSessionsPanel">
 
-        <div className="sectionHeading">
+        {symbol && (
 
-          <div>
-            <h2>Market Sessions</h2>
-            <p>
-              Live session state reported by OpenD
-            </p>
+          <div className="sectionHeading">
+
+            <div>
+              <h2>
+                Market Sessions
+              </h2>
+
+              <p>
+                Live session state reported by OpenD
+              </p>
+            </div>
+
           </div>
 
-        </div>
+        )}
 
 
         <div className="sessionGrid">
@@ -577,7 +847,8 @@ export default function Markets() {
 
               <div className="sessionTop">
 
-                <div>
+                <div className="sessionName">
+
                   <strong>
                     {market.name}
                   </strong>
@@ -585,6 +856,7 @@ export default function Markets() {
                   <span>
                     {market.id}
                   </span>
+
                 </div>
 
 
@@ -712,7 +984,9 @@ function PriceChart({
           {}
         );
 
-      series.setData(priceData);
+      series.setData(
+        priceData
+      );
 
     } else {
 
@@ -730,7 +1004,9 @@ function PriceChart({
             c.time,
             timeframe
           ),
-          value: Number(c.close)
+          value: Number(
+            c.close
+          )
         }))
       );
     }
@@ -751,7 +1027,8 @@ function PriceChart({
         );
 
 
-      volumeSeries.priceScale()
+      volumeSeries
+        .priceScale()
         .applyOptions({
           scaleMargins: {
             top: 0.78,
@@ -779,7 +1056,8 @@ function PriceChart({
     }
 
 
-    chart.timeScale()
+    chart
+      .timeScale()
       .fitContent();
 
 
@@ -812,8 +1090,13 @@ function QuoteStat({
   return (
     <div className="quoteStat">
 
-      <span>{label}</span>
-      <strong>{value}</strong>
+      <span>
+        {label}
+      </span>
+
+      <strong>
+        {value}
+      </strong>
 
     </div>
   );
@@ -830,13 +1113,14 @@ function MarketState({
 
 
   const open =
+    normalized.includes("OPEN") ||
     normalized.includes("MORNING") ||
-    normalized.includes("AFTERNOON") ||
-    normalized.includes("OPEN");
+    normalized.includes("AFTERNOON");
 
 
   return (
     <div
+      title={humanState(state)}
       className={
         open
           ? "marketState open"
@@ -846,7 +1130,9 @@ function MarketState({
 
       <span className="dot"></span>
 
-      {state || "UNKNOWN"}
+      <span className="marketStateText">
+        {humanState(state)}
+      </span>
 
     </div>
   );

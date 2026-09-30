@@ -705,3 +705,267 @@ header p {
   color: #94a3b8;
   font-size: 11px;
 }
+
+
+/* ================================
+   Markets search / filtering
+================================ */
+
+.marketToolbar {
+  position: relative;
+  z-index: 20;
+}
+
+.symbolSearch {
+  max-width: 800px;
+}
+
+.filterButton {
+  border: 0 !important;
+  border-left: 1px solid #e2e8f0 !important;
+  background: #f8fafc !important;
+  color: #475569 !important;
+
+  padding: 13px 14px !important;
+  border-radius: 0 !important;
+
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.searchButton {
+  border-radius: 0 11px 11px 0 !important;
+}
+
+.clearSearchButton {
+  background: transparent !important;
+  color: #64748b !important;
+  border: 0 !important;
+  padding: 8px !important;
+}
+
+.marketFilterPanel {
+  position: absolute;
+
+  top: 58px;
+  right: calc(100% - 800px);
+
+  width: 285px;
+
+  background: white;
+
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+
+  box-shadow:
+    0 14px 40px rgba(15,23,42,.15);
+
+  padding: 12px;
+
+  z-index: 40;
+}
+
+.marketFilterTitle {
+  font-size: 12px;
+  font-weight: 800;
+  color: #64748b;
+
+  text-transform: uppercase;
+
+  padding: 5px 7px 9px;
+}
+
+.marketFilterOption {
+  display: flex;
+  align-items: center;
+
+  gap: 10px;
+
+  padding: 8px 7px;
+
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.marketFilterOption:hover {
+  background: #f8fafc;
+}
+
+.marketFilterOption input {
+  width: 15px;
+  height: 15px;
+}
+
+.marketFilterOption span {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+
+  font-size: 13px;
+  color: #64748b;
+}
+
+.marketFilterOption strong {
+  min-width: 26px;
+  color: #111827;
+}
+
+.marketFilterActions {
+  display: flex;
+  justify-content: space-between;
+
+  border-top: 1px solid #eef2f7;
+
+  margin-top: 7px;
+  padding-top: 9px;
+}
+
+.marketFilterActions button {
+  border: 0;
+  background: transparent;
+
+  color: #2563eb;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+
+.suggestionMain,
+.suggestionMarket {
+  min-width: 0;
+}
+
+.suggestionMain {
+  flex: 1;
+  overflow: hidden;
+}
+
+.suggestionMain strong,
+.suggestionMain span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestionMarket {
+  margin-left: 14px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.suggestionMarket > span {
+  display: inline-block;
+
+  background: #eef2ff;
+  color: #4f46e5;
+
+  padding: 3px 6px;
+  border-radius: 6px;
+
+  font-weight: 800;
+  font-size: 10px;
+}
+
+.suggestionMarket small {
+  display: block;
+  margin-top: 4px;
+}
+
+
+/* ================================
+   Market sessions
+================================ */
+
+.marketLanding {
+  margin-bottom: 14px;
+}
+
+.marketLanding h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.marketLanding p {
+  margin: 5px 0 0;
+  color: #8490a2;
+  font-size: 13px;
+}
+
+.sessionCard {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sessionTop {
+  min-width: 0;
+  align-items: flex-start;
+}
+
+.sessionName {
+  min-width: 0;
+  flex: 1;
+}
+
+.sessionName strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketState {
+  min-width: 0;
+  max-width: 52%;
+
+  justify-content: flex-end;
+  align-items: flex-start;
+
+  flex-shrink: 1;
+}
+
+.marketState .dot {
+  flex: 0 0 9px;
+  margin-top: 3px;
+}
+
+.marketStateText {
+  display: block;
+
+  min-width: 0;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  white-space: nowrap;
+
+  font-size: 10px;
+  line-height: 1.2;
+
+  text-align: right;
+}
+
+.sessionSchedule strong {
+  overflow-wrap: anywhere;
+}
+
+.sessionTimezone {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+@media (max-width: 900px) {
+
+  .marketFilterPanel {
+    left: 0;
+    right: auto;
+
+    width: min(320px, 95vw);
+  }
+
+  .filterButton span {
+    display: none;
+  }
+
+}
