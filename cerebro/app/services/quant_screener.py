@@ -582,26 +582,24 @@ class QuantScreener:
         batch_size=400
     ):
         """
-        Fetch snapshots efficiently.
+        Batch snapshots while efficiently isolating
+        unsupported quote symbols.
 
-        Moomoo can reject an entire snapshot batch
-        when even one symbol has unavailable quote data
-        (for example some US OTC securities).
+        Moomoo identifies the bad symbol in errors such
+        as:
 
-        Healthy batches remain batched.
-        Failed batches are recursively divided until
-        the unsupported symbol(s) are isolated.
+        "US OTC market quote is not available for DCCPY."
 
-        This avoids falling back to one request per
-        security.
+        Remove that symbol and retry the remaining batch
+        instead of recursively splitting everything.
         """
+
+        import re
+        import time
 
         result = {}
         failures = {}
 
-        #
-        # Remove duplicates while keeping order.
-        #
         symbols = list(
             dict.fromkeys(
                 symbol
@@ -610,68 +608,117 @@ class QuantScreener:
             )
         )
 
-        def fetch_batch(batch):
-
-            if not batch:
-                return
-
-            try:
-                rows = (
-                    opend.get_snapshots(
-                        batch
-                    )
-                )
-
-                for row in rows:
-                    symbol = (
-                        row.get("symbol")
-                        or row.get("code")
-                        or row.get("stock_code")
-                    )
-
-                    if symbol:
-                        result[symbol] = row
-
-                return
-
-            except Exception as exc:
-
-                #
-                # One symbol left means we have
-                # isolated the incompatible security.
-                #
-                if len(batch) == 1:
-                    failures[
-                        batch[0]
-                    ] = str(exc)
-                    return
-
-                #
-                # Divide the failed batch and retry
-                # each half.
-                #
-                midpoint = (
-                    len(batch) // 2
-                )
-
-                fetch_batch(
-                    batch[:midpoint]
-                )
-
-                fetch_batch(
-                    batch[midpoint:]
-                )
-
         for i in range(
             0,
             len(symbols),
             batch_size
         ):
-            fetch_batch(
+            remaining = list(
                 symbols[
                     i:i + batch_size
                 ]
             )
+
+            while remaining:
+
+                try:
+                    rows = (
+                        opend.get_snapshots(
+                            remaining
+                        )
+                    )
+
+                    for row in rows:
+                        symbol = (
+                            row.get("symbol")
+                            or row.get("code")
+                            or row.get(
+                                "stock_code"
+                            )
+                        )
+
+                        if symbol:
+                            result[
+                                symbol
+                            ] = row
+
+                    #
+                    # Whole remaining batch succeeded.
+                    #
+                    break
+
+                except Exception as exc:
+
+                    message = str(exc)
+
+                    #
+                    # Historical/snapshot request limits
+                    # use rolling windows. If another
+                    # Cerebro component consumed quota,
+                    # wait for the window to clear.
+                    #
+                    if (
+                        "high frequency"
+                        in message.lower()
+                    ):
+                        time.sleep(31)
+                        continue
+
+                    #
+                    # Example:
+                    #
+                    # US OTC market quote is not
+                    # available for DCCPY.
+                    #
+                    match = re.search(
+                        r"not available for "
+                        r"([A-Za-z0-9.\-]+)",
+                        message,
+                        re.IGNORECASE
+                    )
+
+                    if match:
+
+                        raw_symbol = (
+                            match.group(1)
+                            .rstrip(".")
+                            .upper()
+                        )
+
+                        full_symbol = (
+                            raw_symbol
+                            if raw_symbol.startswith(
+                                "US."
+                            )
+                            else
+                            "US." + raw_symbol
+                        )
+
+                        failures[
+                            full_symbol
+                        ] = message
+
+                        remaining = [
+                            symbol
+                            for symbol
+                            in remaining
+                            if symbol.upper()
+                            != full_symbol
+                        ]
+
+                        continue
+
+                    #
+                    # Unknown batch error:
+                    # don't create hundreds of recursive
+                    # requests. Record the batch instead.
+                    #
+                    for symbol in remaining:
+                        failures[
+                            symbol
+                        ] = message
+
+                    break
 
         return result, failures
 
