@@ -1,4 +1,6 @@
 from statistics import mean
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from moomoo import (
     OpenQuoteContext,
@@ -238,10 +240,68 @@ class QuantScreener:
             except Exception:
                 current_turnover = None
 
+            #
+            # Current turnover is cumulative intraday.
+            # A fixed $5M threshold near the open would
+            # incorrectly reject otherwise liquid stocks.
+            #
+            effective_turnover = current_turnover
+
+            now_ny = datetime.now(
+                ZoneInfo("America/New_York")
+            )
+
+            regular_open = now_ny.replace(
+                hour=9,
+                minute=30,
+                second=0,
+                microsecond=0
+            )
+
+            regular_close = now_ny.replace(
+                hour=16,
+                minute=0,
+                second=0,
+                microsecond=0
+            )
+
+            in_regular_session = (
+                us_state == "AFTERNOON"
+                and regular_open <= now_ny < regular_close
+            )
+
             if (
-                current_turnover is None
-                or current_turnover
-                < min_current_turnover
+                in_regular_session
+                and current_turnover is not None
+            ):
+                elapsed_minutes = max(
+                    1.0,
+                    (
+                        now_ny - regular_open
+                    ).total_seconds() / 60.0
+                )
+
+                session_fraction = min(
+                    1.0,
+                    elapsed_minutes / 390.0
+                )
+
+                effective_turnover = (
+                    current_turnover
+                    / session_fraction
+                )
+
+            apply_current_liquidity_gate = (
+                in_regular_session
+            )
+
+            if (
+                apply_current_liquidity_gate
+                and (
+                    effective_turnover is None
+                    or effective_turnover
+                    < min_current_turnover
+                )
             ):
                 analysis_skipped += 1
 
