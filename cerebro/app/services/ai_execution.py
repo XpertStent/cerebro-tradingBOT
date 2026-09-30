@@ -11,6 +11,14 @@ from app.services.trading import trading
 
 ACTIONABLE = {"BUY", "ADD", "REDUCE", "SELL"}
 NON_ACTIONABLE = {"HOLD", "WATCH"}
+TERMINAL_ORDER_STATES = {
+    "FILLED_ALL",
+    "CANCELLED_ALL",
+    "CANCELED_ALL",
+    "FAILED",
+    "DISABLED",
+    "DELETED",
+}
 
 
 class AIExecutionService:
@@ -30,7 +38,7 @@ class AIExecutionService:
             if item.get("symbol")
         }
 
-    def _price(self, symbol, position):
+    def _price(self, symbol, position=None):
         try:
             value = float((position or {}).get("current_price"))
             if value > 0:
@@ -42,6 +50,14 @@ class AIExecutionService:
         if value <= 0:
             raise RuntimeError(f"No valid market price available for {symbol}")
         return value
+
+    def _has_pending_order(self, symbol, orders):
+        symbol = str(symbol).upper()
+        return any(
+            str(item.get("symbol") or "").upper() == symbol
+            and str(item.get("status") or "").upper() not in TERMINAL_ORDER_STATES
+            for item in (orders or [])
+        )
 
     def _persist_decision(self, *, item, context, candidate, position, run_id):
         record = ai_memory.create_decision(
@@ -74,13 +90,27 @@ class AIExecutionService:
                 invalidation=item.get("thesis_invalidation"),
                 entry_decision_id=record["id"],
             )
-
         return record
+
+    def _size(self, *, action, target_pct, total_value, current_value,
+              current_qty, price):
+        if action == "SELL":
+            return "SELL", int(current_qty)
+        if target_pct is None:
+            raise ValueError(f"{action} requires desired_exposure_pct")
+
+        target_value = total_value * (float(target_pct) / 100.0)
+        if action in {"BUY", "ADD"}:
+            return "BUY", int(max(0, (target_value - current_value) // price))
+
+        quantity = int(max(0, (current_value - target_value) // price))
+        return "SELL", min(quantity, int(current_qty))
 
     def build(self, *, context, decision_result, memory_run_id=None):
         account = context.get("portfolio", {}).get("account") or {}
         positions = self._position_map(context)
         candidates = self._candidate_map(context)
+        pending_orders = context.get("portfolio", {}).get("pending_orders") or []
         total_value = float(account.get("total_value") or 0)
         starting_cash = float(account.get("cash") or 0)
         starting_market_value = float(account.get("market_value") or 0)
@@ -135,13 +165,23 @@ class AIExecutionService:
 
             if action not in ACTIONABLE:
                 ai_memory.set_execution_result(
-                    record["id"],
-                    status="REJECTED",
+                    record["id"], status="REJECTED",
                     rejection_code="INVALID_ACTION",
                     rejection_reason=f"Unsupported actionable decision: {action}",
                 )
                 proposal["status"] = "BLOCKED"
                 proposal["message"] = "Unsupported actionable decision"
+                proposals.append(proposal)
+                continue
+
+            if self._has_pending_order(symbol, pending_orders):
+                proposal["status"] = "BLOCKED"
+                proposal["message"] = "Existing pending broker order prevents a duplicate AI order"
+                ai_memory.set_execution_result(
+                    record["id"], status="REJECTED",
+                    rejection_code="PENDING_ORDER_EXISTS",
+                    rejection_reason=proposal["message"],
+                )
                 proposals.append(proposal)
                 continue
 
@@ -154,30 +194,25 @@ class AIExecutionService:
             current_value = float((position or {}).get("market_value") or 0)
             target_pct = item.get("desired_exposure_pct")
 
-            if action == "SELL":
-                side = "SELL"
-                quantity = int(current_qty)
-            else:
-                if target_pct is None:
-                    proposal["status"] = "BLOCKED"
-                    proposal["message"] = f"{action} requires desired_exposure_pct for deterministic sizing"
-                    ai_memory.set_execution_result(
-                        record["id"],
-                        status="REJECTED",
-                        rejection_code="MISSING_TARGET_EXPOSURE",
-                        rejection_reason=proposal["message"],
-                    )
-                    proposals.append(proposal)
-                    continue
-
-                target_value = total_value * (float(target_pct) / 100.0)
-                if action in {"BUY", "ADD"}:
-                    side = "BUY"
-                    quantity = int(max(0, (target_value - current_value) // price))
-                else:
-                    side = "SELL"
-                    quantity = int(max(0, (current_value - target_value) // price))
-                    quantity = min(quantity, int(current_qty))
+            try:
+                side, quantity = self._size(
+                    action=action,
+                    target_pct=target_pct,
+                    total_value=total_value,
+                    current_value=current_value,
+                    current_qty=current_qty,
+                    price=price,
+                )
+            except ValueError as exc:
+                proposal["status"] = "BLOCKED"
+                proposal["message"] = str(exc)
+                ai_memory.set_execution_result(
+                    record["id"], status="REJECTED",
+                    rejection_code="MISSING_TARGET_EXPOSURE",
+                    rejection_reason=proposal["message"],
+                )
+                proposals.append(proposal)
+                continue
 
             if quantity <= 0:
                 proposal["message"] = "Target exposure does not require a whole-share order"
@@ -189,8 +224,7 @@ class AIExecutionService:
                 proposal["status"] = "BLOCKED"
                 proposal["message"] = f"Maximum new positions per run ({max_new_positions}) reached"
                 ai_memory.set_execution_result(
-                    record["id"],
-                    status="REJECTED",
+                    record["id"], status="REJECTED",
                     rejection_code="MAX_NEW_POSITIONS",
                     rejection_reason=proposal["message"],
                 )
@@ -207,6 +241,9 @@ class AIExecutionService:
                 "estimated_price": price,
             }
             metrics = ((candidate.get("quant") or {}).get("metrics") or {})
+            median_turnover = metrics.get("median_turnover_60d")
+            proposal["median_turnover_60d"] = median_turnover
+
             risk_result = risk.evaluate_order(
                 trading_enabled=settings.get_bool("trading.enabled"),
                 mode=str(settings.get("trading.mode")),
@@ -218,7 +255,7 @@ class AIExecutionService:
                 portfolio_cash=projected_cash,
                 portfolio_market_value=projected_market_value,
                 current_position_value=current_value,
-                median_turnover_60d=metrics.get("median_turnover_60d"),
+                median_turnover_60d=median_turnover,
             )
             proposal["order"] = order
             proposal["risk"] = risk_result
@@ -227,8 +264,7 @@ class AIExecutionService:
                 proposal["status"] = "BLOCKED"
                 proposal["message"] = "Blocked by deterministic risk engine"
                 ai_memory.set_execution_result(
-                    record["id"],
-                    status="REJECTED",
+                    record["id"], status="REJECTED",
                     rejection_code="RISK_BLOCKED",
                     rejection_reason=proposal["message"],
                 )
@@ -244,7 +280,6 @@ class AIExecutionService:
                 else:
                     projected_cash += reserved_value
                     projected_market_value = max(0.0, projected_market_value - reserved_value)
-
                 if action == "BUY":
                     new_positions_used += 1
 
@@ -260,24 +295,91 @@ class AIExecutionService:
             },
         }
 
+    def _fresh_execution_order(self, proposal):
+        symbol = proposal["symbol"]
+        action = proposal["action"]
+
+        if self._has_pending_order(symbol, trading.get_orders()):
+            raise RuntimeError(
+                f"A pending broker order already exists for {symbol}; duplicate execution blocked"
+            )
+
+        account = trading.get_account_summary(refresh=True)
+        positions = trading.get_positions(refresh=True)
+        position = next(
+            (item for item in positions if str(item.get("symbol") or "").upper() == symbol),
+            None,
+        )
+        total_value = float(account.get("total_value") or 0)
+        if total_value <= 0:
+            raise RuntimeError("Fresh portfolio value is unavailable")
+
+        price = self._price(symbol)
+        current_qty = float(
+            (position or {}).get("available_quantity")
+            or (position or {}).get("quantity")
+            or 0
+        )
+        current_value = float((position or {}).get("market_value") or 0)
+        side, quantity = self._size(
+            action=action,
+            target_pct=proposal.get("desired_exposure_pct"),
+            total_value=total_value,
+            current_value=current_value,
+            current_qty=current_qty,
+            price=price,
+        )
+        if quantity <= 0:
+            raise RuntimeError("Target exposure no longer requires a whole-share order")
+
+        order_type = str(settings.get("execution.default_order_type") or "MARKET").upper()
+        fresh_risk = risk.evaluate_order(
+            trading_enabled=settings.get_bool("trading.enabled"),
+            mode=str(settings.get("trading.mode")),
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            estimated_price=price,
+            portfolio_total=total_value,
+            portfolio_cash=float(account.get("cash") or 0),
+            portfolio_market_value=float(account.get("market_value") or 0),
+            current_position_value=current_value,
+            median_turnover_60d=proposal.get("median_turnover_60d"),
+        )
+        if not fresh_risk.get("approved"):
+            failed_checks = [
+                check.get("message")
+                for check in fresh_risk.get("risk_checks") or []
+                if not check.get("passed")
+            ]
+            raise RuntimeError(
+                "Fresh risk check blocked execution: " + "; ".join(failed_checks)
+            )
+
+        return {
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "order_type": order_type,
+            "price": price if order_type == "LIMIT" else None,
+            "estimated_price": price,
+        }, fresh_risk
+
     def execute(self, proposal):
         if proposal.get("status") not in {"PENDING_APPROVAL", "APPROVED"}:
             raise RuntimeError("Proposal is not executable")
         if str(settings.get("trading.mode")).lower() != "paper":
             raise RuntimeError("AI execution is limited to paper trading")
-        risk_result = proposal.get("risk") or {}
-        if not risk_result.get("approved"):
-            raise RuntimeError("Proposal is not approved by the risk engine")
 
-        order = proposal.get("order") or {}
         decision_id = proposal.get("decision_id")
+        order, fresh_risk = self._fresh_execution_order(proposal)
         ai_memory.set_execution_result(decision_id, status="APPROVED")
 
         broker = trading.place_paper_order(
             symbol=order["symbol"],
             side=order["side"],
             quantity=order["quantity"],
-            order_type=order.get("order_type") or "MARKET",
+            order_type=order["order_type"],
             price=order.get("price"),
         )
         ai_memory.set_execution_result(
@@ -307,8 +409,10 @@ class AIExecutionService:
 
         result = deepcopy(proposal)
         result["status"] = "EXECUTED"
+        result["order"] = order
+        result["risk"] = fresh_risk
         result["broker_order"] = broker
-        result["message"] = "Paper order submitted"
+        result["message"] = "Paper order submitted after fresh risk validation"
         return result
 
     def reject(self, proposal, reason="Rejected by user"):
