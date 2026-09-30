@@ -5,6 +5,15 @@
   overflow: hidden;
 }
 
+.dashboardSections,
+.portfolioPage,
+.watchlistPage,
+.activityPage,
+.ordersPage {
+  display: grid;
+  gap: 18px;
+}
+
 .collapsibleHeader {
   display: flex;
   align-items: center;
@@ -72,6 +81,10 @@
 
 .scrollRegion.compact {
   max-height: 420px;
+}
+
+.scrollRegion table {
+  min-width: max-content;
 }
 
 @media (max-width: 760px) {
