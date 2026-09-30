@@ -189,6 +189,86 @@ class TradingClient:
 
 
 
+    def place_paper_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        order_type: str = "MARKET",
+        price: float | None = None
+    ):
+        from moomoo import TrdSide, OrderType
+
+        account_id = self._paper_account_id()
+        ctx = self._context()
+
+        try:
+            side_map = {
+                "BUY": TrdSide.BUY,
+                "SELL": TrdSide.SELL
+            }
+
+            order_type_map = {
+                "MARKET": OrderType.MARKET,
+                "LIMIT": OrderType.NORMAL
+            }
+
+            if side not in side_map:
+                raise ValueError("side must be BUY or SELL")
+
+            if order_type not in order_type_map:
+                raise ValueError("order_type must be MARKET or LIMIT")
+
+            kwargs = {
+                "qty": quantity,
+                "code": symbol,
+                "trd_side": side_map[side],
+                "order_type": order_type_map[order_type],
+                "trd_env": TrdEnv.SIMULATE,
+                "acc_id": account_id
+            }
+
+            if order_type == "LIMIT":
+                if price is None:
+                    raise ValueError("LIMIT order requires price")
+
+                kwargs["price"] = price
+
+            else:
+                # Moomoo still expects a price argument in some API builds.
+                kwargs["price"] = 0
+
+            ret, data = ctx.place_order(**kwargs)
+
+            if ret != RET_OK:
+                raise RuntimeError(str(data))
+
+            if data.empty:
+                raise RuntimeError("OpenD returned no order data")
+
+            row = data.iloc[0]
+
+            return {
+                "order_id": self._clean(row.get("order_id")),
+                "symbol": self._clean(row.get("code")),
+                "name": self._clean(row.get("stock_name")),
+                "side": str(row.get("trd_side")),
+                "order_type": str(row.get("order_type")),
+                "status": str(row.get("order_status")),
+                "quantity": self._clean(row.get("qty")),
+                "price": self._clean(row.get("price")),
+                "filled_quantity": self._clean(row.get("dealt_qty")),
+                "filled_average_price": self._clean(row.get("dealt_avg_price")),
+                "created_at": self._clean(row.get("create_time")),
+                "updated_at": self._clean(row.get("updated_time")),
+                "mode": "PAPER"
+            }
+
+        finally:
+            ctx.close()
+
+
+
 trading = TradingClient(
     host=config["moomoo"]["host"],
     port=config["moomoo"]["port"]
