@@ -8,6 +8,13 @@ import os
 app = Flask(__name__)
 sock = Sock(app)
 
+@app.after_request
+def disable_cache(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 OPEND_HOST = "opend"
 OPEND_API_PORT = 11111
 OPEND_TELNET_PORT = 22222
