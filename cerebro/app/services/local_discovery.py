@@ -23,19 +23,16 @@ class LocalDiscovery:
         min_price=None,
         min_market_cap=None,
         consensus_bonus=None,
+        excluded_symbols=None,
     ):
-        """Run independent snapshot discovery screens and union the results.
+        """Run independent snapshot screens, then union by consensus.
 
-        Each screen has its own Top-N. ``per_screen`` is retained only as a
-        compatibility override for callers that explicitly provide it.
+        Each discovery screen has its own Top-N. ``per_screen`` survives only
+        as a compatibility override for callers that intentionally want one
+        common limit across every screen.
         """
 
-        default_screen = (
-            int(per_screen)
-            if per_screen is not None
-            else None
-        )
-
+        default_screen = int(per_screen) if per_screen is not None else None
         configured_limits = {
             "daily_momentum": int(settings.get("discovery.daily_momentum.top_n")),
             "volume_surge": int(settings.get("discovery.volume_surge.top_n")),
@@ -84,10 +81,17 @@ class LocalDiscovery:
             else consensus_bonus
         )
 
+        excluded = {"US.SPY"}
+        excluded.update(
+            str(symbol).upper()
+            for symbol in (excluded_symbols or [])
+            if symbol
+        )
+
         eligible = []
 
         for symbol, row in snapshots.items():
-            if symbol == "US.SPY":
+            if str(symbol).upper() in excluded:
                 continue
 
             price = self._num(row.get("price"))
@@ -96,19 +100,14 @@ class LocalDiscovery:
 
             if price is None or price < min_price:
                 continue
-
             if market_cap is None or market_cap < min_market_cap:
                 continue
-
             if row.get("sec_status") != "NORMAL":
                 continue
-
             if row.get("equity_valid") is not True:
                 continue
-
             if row.get("suspension") is True:
                 continue
-
             if previous_close is None or previous_close <= 0:
                 continue
 
@@ -130,11 +129,12 @@ class LocalDiscovery:
                 return []
 
             rows = [
-                x for x in eligible
-                if self._num(x.get(key)) is not None
+                item
+                for item in eligible
+                if self._num(item.get(key)) is not None
             ]
             rows.sort(
-                key=lambda x: self._num(x.get(key)),
+                key=lambda item: self._num(item.get(key)),
                 reverse=reverse,
             )
             return rows[:configured_limits[screen_name]]
@@ -190,7 +190,7 @@ class LocalDiscovery:
 
         discovered = list(combined.values())
         discovered.sort(
-            key=lambda x: x["discovery_score"],
+            key=lambda item: item["discovery_score"],
             reverse=True,
         )
 
