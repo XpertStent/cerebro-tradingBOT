@@ -1,5 +1,4 @@
 services:
-
   opend:
     build: .
     container_name: moomoo-opend
@@ -23,6 +22,9 @@ services:
 
     ports:
       - "6789:6789"
+
+    volumes:
+      - opend-state:/root/.com.moomoo.OpenD/F3CNN:ro
 
     depends_on:
       - opend
