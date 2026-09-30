@@ -5,6 +5,7 @@ from copy import deepcopy
 
 from app.services.ai_decision import ai_decision
 from app.services.ai_execution import ai_execution
+from app.services.ai_memory import ai_memory
 from app.services.latest_ai_decision import latest_ai_decision
 from app.services.latest_quant import latest_quant
 from app.services.quant_screener import quant_screener
@@ -25,6 +26,19 @@ class AIDecisionJobManager:
     def start(self, *, run_type="MANUAL", enrich_research=None):
         if enrich_research is None:
             enrich_research = settings.get_bool("ai.research.enabled")
+
+        with self._lock:
+            active = next(
+                (
+                    job for job in self._jobs.values()
+                    if job.get("status") in {"QUEUED", "RUNNING"}
+                ),
+                None,
+            )
+            if active:
+                raise RuntimeError(
+                    f"AI workflow {active['run_id']} is already {active['status'].lower()}"
+                )
 
         run_id = "ai_" + uuid.uuid4().hex[:12]
         now = self._now()
@@ -76,9 +90,24 @@ class AIDecisionJobManager:
             total = int(quant.get("total") or 0)
             if total > 0:
                 quant["percent"] = round(min(99.0, processed / total * 100.0), 1)
-            # Quant occupies the first 55% of the end-to-end progress bar.
             job["percent"] = round(float(quant.get("percent") or 0) * 0.55, 1)
             job["message"] = quant.get("message") or job.get("message")
+
+    def _execution_failed(self, proposal, exc):
+        failed = deepcopy(proposal)
+        failed["status"] = "EXECUTION_FAILED"
+        failed["message"] = str(exc)
+        decision_id = failed.get("decision_id")
+        if decision_id:
+            try:
+                ai_memory.set_execution_result(
+                    decision_id,
+                    status="DEFERRED",
+                    broker_status=f"EXECUTION_ERROR: {exc}",
+                )
+            except Exception:
+                pass
+        return failed
 
     def _worker(self, *, run_id, run_type, enrich_research):
         with self._run_lock:
@@ -93,9 +122,7 @@ class AIDecisionJobManager:
 
             try:
                 quant_result = quant_screener.run(
-                    progress_callback=lambda **kwargs: self._quant_progress(
-                        run_id, **kwargs
-                    )
+                    progress_callback=lambda **kwargs: self._quant_progress(run_id, **kwargs)
                 )
                 latest_quant.save(run_id=run_id, result=quant_result)
 
@@ -131,10 +158,7 @@ class AIDecisionJobManager:
                 result = {
                     "run_id": run_id,
                     "run_type": str(run_type).upper(),
-                    "quant": {
-                        "run_id": run_id,
-                        "result": quant_result,
-                    },
+                    "quant": {"run_id": run_id, "result": quant_result},
                     "ai": decision_bundle,
                     "execution": proposal_bundle,
                 }
@@ -144,7 +168,7 @@ class AIDecisionJobManager:
                         run_id,
                         stage="AUTO_EXECUTION",
                         percent=94.0,
-                        message="Auto-execution enabled: submitting approved paper proposals",
+                        message="Auto-execution enabled: submitting risk-approved paper proposals",
                     )
                     executed = []
                     for proposal in proposal_bundle.get("proposals") or []:
@@ -152,10 +176,7 @@ class AIDecisionJobManager:
                             try:
                                 executed.append(ai_execution.execute(proposal))
                             except Exception as exc:
-                                failed = deepcopy(proposal)
-                                failed["status"] = "EXECUTION_FAILED"
-                                failed["message"] = str(exc)
-                                executed.append(failed)
+                                executed.append(self._execution_failed(proposal, exc))
                         else:
                             executed.append(proposal)
                     result["execution"]["proposals"] = executed
@@ -168,7 +189,11 @@ class AIDecisionJobManager:
                 self.update(
                     run_id,
                     status="COMPLETE",
-                    stage="AWAITING_APPROVAL" if not proposal_bundle.get("auto_execute") else "COMPLETE",
+                    stage=(
+                        "AWAITING_APPROVAL"
+                        if not proposal_bundle.get("auto_execute")
+                        else "COMPLETE"
+                    ),
                     percent=100.0,
                     finished_at=self._now(),
                     message=(
@@ -248,24 +273,34 @@ class AIDecisionJobManager:
 
         result = deepcopy(payload["result"])
         execution = result.get("execution") or {}
-        if execution.get("approval_mode") == "AUTO":
-            raise RuntimeError("This run used automatic execution and no approval is pending")
+        if execution.get("approval_mode") != "MANUAL":
+            raise RuntimeError("This AI run is not awaiting manual approval")
 
         updated = []
+        failures = 0
         for proposal in execution.get("proposals") or []:
             if proposal.get("status") == "PENDING_APPROVAL":
-                updated.append(ai_execution.execute(proposal))
+                try:
+                    updated.append(ai_execution.execute(proposal))
+                except Exception as exc:
+                    failures += 1
+                    updated.append(self._execution_failed(proposal, exc))
             else:
                 updated.append(proposal)
 
         execution["proposals"] = updated
         execution["approval_mode"] = "MANUAL_APPROVED"
+        execution["execution_failures"] = failures
         result["execution"] = execution
         latest_ai_decision.save(run_id=run_id, result=result)
         self.update(
             run_id,
             stage="COMPLETE",
-            message="AI decision approved and executable paper orders submitted",
+            message=(
+                "AI decision approved; eligible paper orders submitted"
+                if failures == 0
+                else f"AI decision approved with {failures} broker execution failure(s)"
+            ),
             result=result,
         )
         return result
@@ -277,8 +312,8 @@ class AIDecisionJobManager:
 
         result = deepcopy(payload["result"])
         execution = result.get("execution") or {}
-        if execution.get("approval_mode") == "AUTO":
-            raise RuntimeError("This run used automatic execution and can no longer be rejected")
+        if execution.get("approval_mode") != "MANUAL":
+            raise RuntimeError("This AI run is not awaiting manual approval")
 
         updated = []
         for proposal in execution.get("proposals") or []:
