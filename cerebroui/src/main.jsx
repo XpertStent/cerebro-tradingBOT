@@ -20,6 +20,7 @@ import Activity from "./Activity";
 import Strategies from "./Strategies";
 import Watchlist from "./Watchlist";
 import Settings from "./Settings";
+import CollapsibleSection from "./CollapsibleSection";
 
 const nav = [
   ["Dashboard", LayoutDashboard],
@@ -34,7 +35,6 @@ const nav = [
 
 function money(value) {
   if (value === null || value === undefined) return "—";
-
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD"
@@ -58,7 +58,6 @@ function App() {
       setSystem(await s.json());
       setPortfolio(await p.json());
       setOrders(await o.json());
-
     } catch (e) {
       console.error(e);
     }
@@ -73,43 +72,25 @@ function App() {
   useEffect(() => {
     const openMarket = event => {
       if (event.detail?.symbol) {
-        sessionStorage.setItem(
-          "cerebro.market.symbol",
-          event.detail.symbol
-        );
-
-        sessionStorage.setItem(
-          "cerebro.market.name",
-          event.detail.name || ""
-        );
-
+        sessionStorage.setItem("cerebro.market.symbol", event.detail.symbol);
+        sessionStorage.setItem("cerebro.market.name", event.detail.name || "");
         setActivePage("Markets");
       }
     };
 
-    window.addEventListener(
-      "cerebro-open-market",
-      openMarket
-    );
-
-    return () => {
-      window.removeEventListener(
-        "cerebro-open-market",
-        openMarket
-      );
-    };
+    window.addEventListener("cerebro-open-market", openMarket);
+    return () => window.removeEventListener("cerebro-open-market", openMarket);
   }, []);
 
   const ready = system?.status === "READY";
-
-  const openOrders =
-    orders?.orders?.filter(
-      o => !["FILLED_ALL", "CANCELLED_ALL", "FAILED"].includes(o.status)
-    ).length ?? 0;
+  const openOrders = orders?.orders?.filter(
+    o => !["FILLED_ALL", "CANCELLED_ALL", "CANCELED_ALL", "FAILED", "DELETED"].includes(
+      String(o.status || "").toUpperCase()
+    )
+  ).length ?? 0;
 
   return (
     <div className="app">
-
       <aside className="sidebar">
         <div className="brand">
           <CircleDollarSign size={27}/>
@@ -139,7 +120,6 @@ function App() {
       </aside>
 
       <main>
-
         <header>
           <div>
             <h1>{activePage}</h1>
@@ -179,7 +159,6 @@ function App() {
             <p>This module will be added next.</p>
           </div>
         )}
-
       </main>
     </div>
   );
@@ -188,115 +167,67 @@ function App() {
 function Dashboard({ system, portfolio, orders, openOrders }) {
   const account = portfolio?.account;
   const positions = portfolio?.positions ?? [];
-
-  const latestOrder =
-    orders?.orders?.length
-      ? orders.orders[orders.orders.length - 1]
-      : null;
+  const latestOrder = orders?.orders?.length
+    ? orders.orders[orders.orders.length - 1]
+    : null;
 
   return (
-    <>
-      <section className="statusGrid">
+    <div className="dashboardSections">
+      <CollapsibleSection
+        title="System Overview"
+        subtitle="Broker, market-data and account readiness."
+      >
+        <section className="statusGrid">
+          <StatusCard label="System" value={system?.status ?? "Loading"} good={system?.status === "READY"}/>
+          <StatusCard label="OpenD" value={system?.opend?.connected ? "Connected" : "Disconnected"} good={system?.opend?.connected}/>
+          <StatusCard label="Market Data" value={system?.market_data?.status ?? "Loading"} good={system?.market_data?.status === "READY"}/>
+          <StatusCard
+            label="Trading"
+            value={system ? `${system.trading.mode} · ${system.trading.enabled ? "Enabled" : "Disabled"}` : "Loading"}
+            good={system?.trading?.enabled}
+          />
+        </section>
 
-        <StatusCard
-          label="System"
-          value={system?.status ?? "Loading"}
-          good={system?.status === "READY"}
-        />
+        <section className="metricGrid">
+          <Metric label="Portfolio Value" value={money(account?.total_value)}/>
+          <Metric label="Cash" value={money(account?.cash)}/>
+          <Metric label="Open Positions" value={positions.length}/>
+          <Metric label="Pending Orders" value={openOrders}/>
+        </section>
+      </CollapsibleSection>
 
-        <StatusCard
-          label="OpenD"
-          value={system?.opend?.connected ? "Connected" : "Disconnected"}
-          good={system?.opend?.connected}
-        />
-
-        <StatusCard
-          label="Market Data"
-          value={system?.market_data?.status ?? "Loading"}
-          good={system?.market_data?.status === "READY"}
-        />
-
-        <StatusCard
-          label="Trading"
-          value={
-            system
-              ? `${system.trading.mode} · ${
-                  system.trading.enabled ? "Enabled" : "Disabled"
-                }`
-              : "Loading"
-          }
-          good={system?.trading?.enabled}
-        />
-
-      </section>
-
-      <section className="metricGrid">
-
-        <Metric
-          label="Portfolio Value"
-          value={money(account?.total_value)}
-        />
-
-        <Metric
-          label="Cash"
-          value={money(account?.cash)}
-        />
-
-        <Metric
-          label="Open Positions"
-          value={positions.length}
-        />
-
-        <Metric
-          label="Pending Orders"
-          value={openOrders}
-        />
-
-      </section>
-
-      <section className="lowerGrid">
-
-        <div className="panel">
-          <div className="panelHeader">
-            <h2>Portfolio</h2>
-            <span>{account?.mode ?? "—"}</span>
-          </div>
-
+      <div className="lowerGrid">
+        <CollapsibleSection
+          title="Portfolio"
+          subtitle="Current paper-account summary."
+          actions={<span className="paperBadge">{account?.mode ?? "—"}</span>}
+        >
           <div className="rows">
-            <Row label="Total value" value={money(account?.total_value)} />
-            <Row label="Cash" value={money(account?.cash)} />
-            <Row label="Market value" value={money(account?.market_value)} />
-            <Row label="Positions" value={positions.length} />
+            <Row label="Total value" value={money(account?.total_value)}/>
+            <Row label="Cash" value={money(account?.cash)}/>
+            <Row label="Market value" value={money(account?.market_value)}/>
+            <Row label="Positions" value={positions.length}/>
           </div>
-        </div>
+        </CollapsibleSection>
 
-        <div className="panel">
-          <div className="panelHeader">
-            <h2>Recent Order</h2>
-          </div>
-
+        <CollapsibleSection
+          title="Recent Order"
+          subtitle="Most recently reported broker order."
+        >
           {latestOrder ? (
             <div className="order">
               <div>
-                <strong>
-                  {latestOrder.side} {latestOrder.quantity} {latestOrder.symbol}
-                </strong>
+                <strong>{latestOrder.side} {latestOrder.quantity} {latestOrder.symbol}</strong>
                 <span>{latestOrder.name}</span>
               </div>
-
-              <div className="orderStatus">
-                {latestOrder.status}
-              </div>
+              <div className="orderStatus">{latestOrder.status}</div>
             </div>
           ) : (
-            <div className="empty">
-              No orders yet
-            </div>
+            <div className="empty">No orders yet</div>
           )}
-        </div>
-
-      </section>
-    </>
+        </CollapsibleSection>
+      </div>
+    </div>
   );
 }
 
