@@ -14,6 +14,7 @@ from app.api.scanner import router as scanner_router
 from app.api.metrics import router as metrics_router
 from app.api.quant_screener import router as quant_screener_router
 from app.api.history import router as history_router
+from app.api.settings import router as settings_router
 
 
 NAME = config["cerebro"]["name"]
@@ -22,7 +23,7 @@ NAME = config["cerebro"]["name"]
 app = FastAPI(
     title="Cerebro",
     description="Trading bot control and market-data API",
-    version="0.2.0"
+    version="0.3.0"
 )
 
 
@@ -38,6 +39,7 @@ app.include_router(scanner_router)
 app.include_router(metrics_router)
 app.include_router(quant_screener_router)
 app.include_router(history_router)
+app.include_router(settings_router)
 
 
 @app.get("/", tags=["System"])
@@ -45,7 +47,7 @@ def root():
 
     return {
         "service": NAME,
-        "version": "0.2.0",
+        "version": "0.3.0",
         "status_endpoint": "/system/status",
         "documentation": "/docs"
     }
