@@ -7,7 +7,7 @@ import {
   ClipboardList,
   Wallet,
   ScrollText,
-  Settings,
+  Settings as SettingsIcon,
   CircleDollarSign
 } from "lucide-react";
 
@@ -18,6 +18,7 @@ import Portfolio from "./Portfolio";
 import Activity from "./Activity";
 import Strategies from "./Strategies";
 import Watchlist from "./Watchlist";
+import Settings from "./Settings";
 
 const nav = [
   ["Dashboard", LayoutDashboard],
@@ -26,7 +27,7 @@ const nav = [
   ["Orders", ClipboardList],
   ["Portfolio", Wallet],
   ["Activity / Logs", ScrollText],
-  ["Settings", Settings]
+  ["Settings", SettingsIcon]
 ];
 
 function money(value) {
@@ -168,6 +169,8 @@ function App() {
           <Strategies />
         ) : activePage === "Activity / Logs" ? (
           <Activity />
+        ) : activePage === "Settings" ? (
+          <Settings />
         ) : (
           <div className="placeholder">
             <h2>{activePage}</h2>
