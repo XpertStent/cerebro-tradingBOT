@@ -1,7 +1,6 @@
 services:
   opend:
     build: .
-    image: moomoo-opend:10.11
     container_name: moomoo-opend
     restart: unless-stopped
     stdin_open: true
