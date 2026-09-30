@@ -91,6 +91,7 @@ class AIRunContextBuilder:
 
             market = str(
                 item.get("market")
+                or item.get("id")
                 or item.get("code")
                 or item.get("name")
                 or ""

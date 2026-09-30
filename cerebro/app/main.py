@@ -10,6 +10,8 @@ from app.api.activity import router as activity_router
 from app.api.strategies import router as strategies_router
 from app.api.watchlist import router as watchlist_router
 from app.api.ai_memory import router as ai_memory_router
+from app.api.scanner import router as scanner_router
+from app.api.metrics import router as metrics_router
 
 
 NAME = config["cerebro"]["name"]
@@ -30,6 +32,8 @@ app.include_router(activity_router)
 app.include_router(strategies_router)
 app.include_router(watchlist_router)
 app.include_router(ai_memory_router)
+app.include_router(scanner_router)
+app.include_router(metrics_router)
 
 
 @app.get("/", tags=["System"])
