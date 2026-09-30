@@ -229,9 +229,18 @@ class MarketMetrics:
             }
 
         #
-        # Discontinuity diagnostic.
-        # QFQ should remove split artifacts.
+        # Discontinuity diagnostics.
         #
+        # QFQ should already remove normal split artifacts,
+        # so an extreme move that is also many times larger
+        # than the stock's typical daily move deserves review.
+        #
+        # These thresholds are intentionally explicit because
+        # they will later become configurable in Settings.
+        #
+        discontinuity_abs_threshold_pct = 35.0
+        discontinuity_multiple_threshold = 8.0
+
         daily_moves = []
 
         for a, b in zip(
@@ -249,6 +258,61 @@ class MarketMetrics:
             max(daily_moves)
             if daily_moves
             else None
+        )
+
+        if daily_moves:
+            ordered_moves = sorted(
+                daily_moves
+            )
+
+            middle = (
+                len(ordered_moves) // 2
+            )
+
+            if len(ordered_moves) % 2:
+                median_abs_daily_return_pct = (
+                    ordered_moves[middle]
+                )
+            else:
+                median_abs_daily_return_pct = (
+                    ordered_moves[middle - 1]
+                    + ordered_moves[middle]
+                ) / 2.0
+
+            #
+            # Protect against an almost-zero median creating
+            # meaningless enormous multiples.
+            #
+            comparison_baseline = max(
+                median_abs_daily_return_pct,
+                0.25
+            )
+
+            max_return_multiple = (
+                max_abs_daily_return_pct
+                / comparison_baseline
+            )
+
+            discontinuity_count = sum(
+                1
+                for move in daily_moves
+                if (
+                    move
+                    >= discontinuity_abs_threshold_pct
+                    and (
+                        move
+                        / comparison_baseline
+                    )
+                    >= discontinuity_multiple_threshold
+                )
+            )
+        else:
+            median_abs_daily_return_pct = None
+            max_return_multiple = None
+            discontinuity_count = 0
+
+        discontinuity_flag = (
+            discontinuity_count > 0
         )
 
         price = closes[-1]
@@ -299,6 +363,40 @@ class MarketMetrics:
                     is not None
                     else None
                 ),
+
+            "median_abs_daily_return_pct":
+                (
+                    round(
+                        median_abs_daily_return_pct,
+                        3
+                    )
+                    if median_abs_daily_return_pct
+                    is not None
+                    else None
+                ),
+
+            "max_return_multiple":
+                (
+                    round(
+                        max_return_multiple,
+                        3
+                    )
+                    if max_return_multiple
+                    is not None
+                    else None
+                ),
+
+            "discontinuity_flag":
+                discontinuity_flag,
+
+            "discontinuity_count":
+                discontinuity_count,
+
+            "discontinuity_abs_threshold_pct":
+                discontinuity_abs_threshold_pct,
+
+            "discontinuity_multiple_threshold":
+                discontinuity_multiple_threshold,
 
             "unchanged_sessions_20d":
                 unchanged,
