@@ -19,9 +19,6 @@ function displayValue(item, value) {
 }
 
 function payloadValue(item, value) {
-  if (item.type === "number" && item.weight_group) {
-    return Number(value) / 100;
-  }
   if (item.type === "integer") return Number.parseInt(value, 10);
   if (item.type === "number") return Number(value);
   return value;
@@ -93,7 +90,11 @@ function SettingControl({ item, value, onChange }) {
         max={numeric ? max : undefined}
         step={item.type === "integer" ? 1 : item.weight_group ? 1 : "any"}
         disabled={item.read_only}
-        onChange={e => onChange(e.target.value)}
+        onChange={e => onChange(
+          item.weight_group
+            ? Number(e.target.value) / 100
+            : e.target.value
+        )}
       />
       {item.weight_group ? <span>%</span> : item.unit ? <span>{item.unit}</span> : null}
     </div>
