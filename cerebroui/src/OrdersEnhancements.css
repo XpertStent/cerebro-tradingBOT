@@ -1,0 +1,54 @@
+.orderActionGroup {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.openSecurityButton {
+  border-radius: 8px;
+  padding: 6px 9px;
+  border: 1px solid #dbe2ea;
+  background: #fff;
+  color: #2563eb;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.openSecurityButton:hover {
+  background: #eff6ff;
+}
+
+.ordersScrollable {
+  overflow: auto;
+  max-height: min(56vh, 620px);
+  scrollbar-gutter: stable;
+}
+
+.ordersScrollable .ordersTable {
+  min-width: 980px;
+}
+
+.ordersScrollable .ordersTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #fff;
+}
+
+.ordersTwoColumn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+}
+
+@media (max-width: 980px) {
+  .ordersTwoColumn {
+    grid-template-columns: 1fr;
+  }
+}
