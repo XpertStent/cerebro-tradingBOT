@@ -64,6 +64,12 @@ class MarketMetrics:
 
             if close is not None:
                 rows.append({
+                    "date": (
+                        row.get("date")
+                        or row.get("time")
+                        or row.get("datetime")
+                        or row.get("time_key")
+                    ),
                     "open": open_price,
                     "close": close,
                     "high": high,
@@ -242,16 +248,22 @@ class MarketMetrics:
         discontinuity_multiple_threshold = 8.0
 
         daily_moves = []
+        discontinuity_events = []
 
-        for a, b in zip(
-            closes,
-            closes[1:]
+        for i, (a, b) in enumerate(
+            zip(
+                closes,
+                closes[1:]
+            ),
+            start=1
         ):
             if a and a > 0:
+                move_pct = (
+                    (b / a - 1) * 100
+                )
+
                 daily_moves.append(
-                    abs(
-                        (b / a - 1) * 100
-                    )
+                    abs(move_pct)
                 )
 
         max_abs_daily_return_pct = (
@@ -293,19 +305,69 @@ class MarketMetrics:
                 / comparison_baseline
             )
 
-            discontinuity_count = sum(
-                1
-                for move in daily_moves
+            discontinuity_count = 0
+
+            for i, move in enumerate(
+                daily_moves,
+                start=1
+            ):
+                multiple = (
+                    move
+                    / comparison_baseline
+                )
+
                 if (
                     move
                     >= discontinuity_abs_threshold_pct
-                    and (
-                        move
-                        / comparison_baseline
-                    )
+                    and multiple
                     >= discontinuity_multiple_threshold
-                )
-            )
+                ):
+                    discontinuity_count += 1
+
+                    previous = rows[i - 1]
+                    current = rows[i]
+
+                    signed_move_pct = (
+                        (
+                            current["close"]
+                            / previous["close"]
+                        ) - 1
+                    ) * 100
+
+                    discontinuity_events.append({
+                        "date":
+                            current.get("date"),
+
+                        "previous_close":
+                            round(
+                                previous["close"],
+                                4
+                            ),
+
+                        "close":
+                            round(
+                                current["close"],
+                                4
+                            ),
+
+                        "return_pct":
+                            round(
+                                signed_move_pct,
+                                3
+                            ),
+
+                        "multiple":
+                            round(
+                                multiple,
+                                3
+                            ),
+
+                        "volume":
+                            current.get("volume"),
+
+                        "turnover":
+                            current.get("turnover"),
+                    })
         else:
             median_abs_daily_return_pct = None
             max_return_multiple = None
@@ -391,6 +453,9 @@ class MarketMetrics:
 
             "discontinuity_count":
                 discontinuity_count,
+
+            "discontinuity_events":
+                discontinuity_events,
 
             "discontinuity_abs_threshold_pct":
                 discontinuity_abs_threshold_pct,
