@@ -1,14 +1,19 @@
+import math
+
 from app.services.opend import opend
 
 
 class MarketMetrics:
 
-    def build(self, symbol: str):
-
+    def build(
+        self,
+        symbol: str,
+        count: int = 260
+    ):
         candles = opend.get_candles(
             symbol=symbol,
             timeframe="1d",
-            count=260
+            count=count
         )
 
         if isinstance(candles, dict):
@@ -24,60 +29,99 @@ class MarketMetrics:
                 "available": False
             }
 
-        closes = [
-            self._f(
+        rows = []
+
+        for row in candles:
+            close = self._f(
                 row.get("close")
                 or row.get("close_price")
             )
-            for row in candles
-        ]
 
-        highs = [
-            self._f(
+            high = self._f(
                 row.get("high")
                 or row.get("high_price")
             )
-            for row in candles
-        ]
 
-        lows = [
-            self._f(
+            low = self._f(
                 row.get("low")
                 or row.get("low_price")
             )
-            for row in candles
-        ]
 
-        volumes = [
-            self._f(
+            volume = self._f(
                 row.get("volume")
             )
-            for row in candles
-        ]
 
-        closes = [
-            x for x in closes
-            if x is not None
-        ]
+            if close is not None:
+                rows.append({
+                    "close": close,
+                    "high": high,
+                    "low": low,
+                    "volume": volume
+                })
 
-        if len(closes) < 20:
+        if len(rows) < 20:
             return {
                 "symbol": symbol,
                 "available": False
             }
 
+        closes = [
+            r["close"]
+            for r in rows
+        ]
+
+        highs = [
+            r["high"]
+            for r in rows
+        ]
+
+        lows = [
+            r["low"]
+            for r in rows
+        ]
+
+        volumes = [
+            r["volume"]
+            for r in rows
+        ]
+
         price = closes[-1]
+
+        ema20 = self._ema(
+            closes,
+            20
+        )
+
+        ema50 = self._ema(
+            closes,
+            50
+        )
+
+        ema200 = self._ema(
+            closes,
+            200
+        )
 
         return {
             "symbol": symbol,
             "available": True,
 
-            "price": price,
+            "price":
+                round(price, 4),
 
+            #
+            # Momentum
+            #
             "return_5d_pct":
                 self._return_pct(
                     closes,
                     5
+                ),
+
+            "return_10d_pct":
+                self._return_pct(
+                    closes,
+                    10
                 ),
 
             "return_20d_pct":
@@ -92,62 +136,119 @@ class MarketMetrics:
                     50
                 ),
 
+            "return_60d_pct":
+                self._return_pct(
+                    closes,
+                    60
+                ),
+
+            "return_120d_pct":
+                self._return_pct(
+                    closes,
+                    120
+                ),
+
+            "return_252d_pct":
+                self._return_pct(
+                    closes,
+                    252
+                ),
+
+            #
+            # Trend
+            #
+            "ema20":
+                ema20,
+
+            "ema50":
+                ema50,
+
+            "ema200":
+                ema200,
+
+            "above_ema20":
+                self._above(
+                    price,
+                    ema20
+                ),
+
+            "above_ema50":
+                self._above(
+                    price,
+                    ema50
+                ),
+
+            "above_ema200":
+                self._above(
+                    price,
+                    ema200
+                ),
+
+            "ema20_above_50":
+                self._above(
+                    ema20,
+                    ema50
+                ),
+
+            "ema50_above_200":
+                self._above(
+                    ema50,
+                    ema200
+                ),
+
+            "ema20_slope_pct":
+                self._ema_slope(
+                    closes,
+                    20,
+                    5
+                ),
+
+            "ema50_slope_pct":
+                self._ema_slope(
+                    closes,
+                    50,
+                    10
+                ),
+
+            #
+            # Oscillator / extension
+            #
             "rsi_14":
                 self._rsi(
                     closes,
                     14
                 ),
 
-            "ema20":
-                self._ema(
-                    closes,
+            "distance_ema20_pct":
+                self._distance_pct(
+                    price,
+                    ema20
+                ),
+
+            "distance_ema50_pct":
+                self._distance_pct(
+                    price,
+                    ema50
+                ),
+
+            #
+            # Participation
+            #
+            "volume_ratio_20d":
+                self._volume_ratio(
+                    volumes,
                     20
                 ),
 
-            "ema50":
-                self._ema(
-                    closes,
+            "volume_ratio_50d":
+                self._volume_ratio(
+                    volumes,
                     50
                 ),
 
-            "ema200":
-                self._ema(
-                    closes,
-                    200
-                ),
-
-            "above_ema20":
-                self._above(
-                    price,
-                    self._ema(
-                        closes,
-                        20
-                    )
-                ),
-
-            "above_ema50":
-                self._above(
-                    price,
-                    self._ema(
-                        closes,
-                        50
-                    )
-                ),
-
-            "above_ema200":
-                self._above(
-                    price,
-                    self._ema(
-                        closes,
-                        200
-                    )
-                ),
-
-            "volume_ratio_20d":
-                self._volume_ratio(
-                    volumes
-                ),
-
+            #
+            # Volatility
+            #
             "atr_pct":
                 self._atr_pct(
                     highs,
@@ -155,13 +256,68 @@ class MarketMetrics:
                     closes,
                     14
                 ),
+
+            "realized_vol_20d":
+                self._realized_vol(
+                    closes,
+                    20
+                ),
+
+            "realized_vol_60d":
+                self._realized_vol(
+                    closes,
+                    60
+                ),
+
+            #
+            # Breakout / range
+            #
+            "range_position_52w":
+                self._range_position(
+                    closes,
+                    252
+                ),
+
+            "distance_20d_high_pct":
+                self._distance_from_high(
+                    closes,
+                    20
+                ),
+
+            "distance_50d_high_pct":
+                self._distance_from_high(
+                    closes,
+                    50
+                ),
+
+            #
+            # Trend persistence
+            #
+            "pct_above_ema20_20d":
+                self._pct_above_ema(
+                    closes,
+                    20,
+                    20
+                ),
+
+            "pct_above_ema50_50d":
+                self._pct_above_ema(
+                    closes,
+                    50,
+                    50
+                ),
         }
 
-    def _f(self, value):
+    def _f(
+        self,
+        value
+    ):
         try:
             if value is None:
                 return None
+
             return float(value)
+
         except Exception:
             return None
 
@@ -173,14 +329,17 @@ class MarketMetrics:
         if len(values) <= days:
             return None
 
-        old = values[-days - 1]
+        old = values[
+            -days - 1
+        ]
 
         if not old:
             return None
 
         return round(
             (
-                values[-1] / old - 1
+                values[-1] / old
+                - 1
             ) * 100,
             3
         )
@@ -216,6 +375,42 @@ class MarketMetrics:
             4
         )
 
+    def _ema_slope(
+        self,
+        values,
+        period,
+        lookback
+    ):
+        if len(values) < (
+            period + lookback
+        ):
+            return None
+
+        current = self._ema(
+            values,
+            period
+        )
+
+        past = self._ema(
+            values[:-lookback],
+            period
+        )
+
+        if (
+            current is None
+            or past is None
+            or past == 0
+        ):
+            return None
+
+        return round(
+            (
+                current / past
+                - 1
+            ) * 100,
+            3
+        )
+
     def _rsi(
         self,
         values,
@@ -231,11 +426,14 @@ class MarketMetrics:
         gains = []
         losses = []
 
-        for prev, current in zip(
+        for previous, current in zip(
             recent,
             recent[1:]
         ):
-            delta = current - prev
+            delta = (
+                current
+                - previous
+            )
 
             gains.append(
                 max(
@@ -278,27 +476,57 @@ class MarketMetrics:
             2
         )
 
-    def _volume_ratio(
+    def _distance_pct(
         self,
-        volumes
+        price,
+        reference
     ):
-        clean = [
-            v for v in volumes
-            if v is not None
-        ]
-
-        if len(clean) < 21:
-            return None
-
-        avg = sum(
-            clean[-21:-1]
-        ) / 20
-
-        if not avg:
+        if (
+            price is None
+            or reference is None
+            or reference == 0
+        ):
             return None
 
         return round(
-            clean[-1] / avg,
+            (
+                price / reference
+                - 1
+            ) * 100,
+            3
+        )
+
+    def _volume_ratio(
+        self,
+        volumes,
+        period
+    ):
+        clean = [
+            v
+            for v in volumes
+            if v is not None
+        ]
+
+        if len(clean) < (
+            period + 1
+        ):
+            return None
+
+        baseline = clean[
+            -(period + 1):-1
+        ]
+
+        average = (
+            sum(baseline)
+            / len(baseline)
+        )
+
+        if not average:
+            return None
+
+        return round(
+            clean[-1]
+            / average,
             3
         )
 
@@ -322,24 +550,29 @@ class MarketMetrics:
                 and c is not None
             ):
                 rows.append(
-                    (h, l, c)
+                    (
+                        h,
+                        l,
+                        c
+                    )
                 )
 
         if len(rows) <= period:
             return None
 
-        tr = []
+        true_ranges = []
 
         for i in range(
             1,
             len(rows)
         ):
-            high, low, _ = rows[i]
+            high = rows[i][0]
+            low = rows[i][1]
             prev_close = rows[
                 i - 1
             ][2]
 
-            tr.append(
+            true_ranges.append(
                 max(
                     high - low,
                     abs(
@@ -353,9 +586,14 @@ class MarketMetrics:
                 )
             )
 
-        atr = sum(
-            tr[-period:]
-        ) / period
+        atr = (
+            sum(
+                true_ranges[
+                    -period:
+                ]
+            )
+            / period
+        )
 
         price = rows[-1][2]
 
@@ -369,18 +607,187 @@ class MarketMetrics:
             3
         )
 
-    def _above(
+    def _realized_vol(
         self,
-        price,
-        value
+        closes,
+        period
     ):
-        if (
-            price is None
-            or value is None
+        if len(closes) <= period:
+            return None
+
+        sample = closes[
+            -(period + 1):
+        ]
+
+        returns = []
+
+        for a, b in zip(
+            sample,
+            sample[1:]
+        ):
+            if a:
+                returns.append(
+                    math.log(
+                        b / a
+                    )
+                )
+
+        if len(returns) < 2:
+            return None
+
+        mean = (
+            sum(returns)
+            / len(returns)
+        )
+
+        variance = (
+            sum(
+                (
+                    x - mean
+                ) ** 2
+                for x in returns
+            )
+            / (
+                len(returns)
+                - 1
+            )
+        )
+
+        daily_std = (
+            variance ** 0.5
+        )
+
+        annualized = (
+            daily_std
+            * math.sqrt(252)
+            * 100
+        )
+
+        return round(
+            annualized,
+            3
+        )
+
+    def _range_position(
+        self,
+        closes,
+        period
+    ):
+        sample = closes[
+            -min(
+                period,
+                len(closes)
+            ):
+        ]
+
+        if not sample:
+            return None
+
+        low = min(sample)
+        high = max(sample)
+
+        if high == low:
+            return 50.0
+
+        return round(
+            (
+                closes[-1] - low
+            )
+            / (
+                high - low
+            )
+            * 100,
+            2
+        )
+
+    def _distance_from_high(
+        self,
+        closes,
+        period
+    ):
+        if len(closes) < period:
+            return None
+
+        high = max(
+            closes[-period:]
+        )
+
+        if not high:
+            return None
+
+        return round(
+            (
+                closes[-1]
+                / high
+                - 1
+            ) * 100,
+            3
+        )
+
+    def _pct_above_ema(
+        self,
+        closes,
+        ema_period,
+        sample_period
+    ):
+        if len(closes) < (
+            ema_period
+            + sample_period
         ):
             return None
 
-        return price > value
+        results = []
+
+        start = (
+            len(closes)
+            - sample_period
+        )
+
+        for i in range(
+            start,
+            len(closes)
+        ):
+            subset = closes[
+                :i + 1
+            ]
+
+            ema = self._ema(
+                subset,
+                ema_period
+            )
+
+            if ema is None:
+                continue
+
+            results.append(
+                1
+                if closes[i] > ema
+                else 0
+            )
+
+        if not results:
+            return None
+
+        return round(
+            (
+                sum(results)
+                / len(results)
+            ) * 100,
+            2
+        )
+
+    def _above(
+        self,
+        left,
+        right
+    ):
+        if (
+            left is None
+            or right is None
+        ):
+            return None
+
+        return left > right
 
 
 market_metrics = MarketMetrics()
