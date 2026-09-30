@@ -2,6 +2,8 @@ from collections import Counter
 
 from app.services.ai_memory import ai_memory
 from app.services.watchlist import watchlist
+from app.services.trading import trading
+from app.services.opend import opend
 
 
 class AIContextBuilder:
@@ -30,6 +32,53 @@ class AIContextBuilder:
 
         watch_item = watchlist.get(
             symbol
+        )
+
+        positions = trading.get_positions()
+        orders = trading.get_orders()
+        account = trading.get_account_summary()
+
+        position = next(
+            (
+                item
+                for item in positions
+                if item.get("symbol") == symbol
+            ),
+            None
+        )
+
+        pending_orders = [
+            item
+            for item in orders
+            if (
+                item.get("symbol") == symbol
+                and str(
+                    item.get("status", "")
+                ).upper()
+                not in {
+                    "FILLED_ALL",
+                    "CANCELLED_ALL",
+                    "FAILED",
+                    "DELETED"
+                }
+            )
+        ]
+
+        market_states = opend.get_market_states()
+
+        symbol_market = (
+            symbol.split(".", 1)[0]
+            if "." in symbol
+            else "US"
+        )
+
+        market_context = next(
+            (
+                item
+                for item in market_states
+                if item.get("market") == symbol_market
+            ),
+            None
         )
 
         rejection_codes = Counter(
@@ -86,6 +135,21 @@ class AIContextBuilder:
             "active_thesis": compact_thesis,
 
             "watchlist": compact_watchlist,
+
+            "market": market_context,
+
+            "portfolio": {
+                "account": {
+                    "mode": account.get("mode"),
+                    "total_value": account.get("total_value"),
+                    "cash": account.get("cash"),
+                    "market_value": account.get("market_value")
+                },
+
+                "position": position,
+
+                "pending_orders": pending_orders
+            },
 
             "recent_decisions": recent_decisions,
 
