@@ -296,6 +296,115 @@ class MarketHistoryStore:
             else None
         )
 
+    def _sync_info(
+        self,
+        symbol
+    ):
+        security_id = self._security_id(
+            symbol
+        )
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    last_sync_at,
+                    last_complete_date
+                FROM history_sync
+                WHERE security_id = ?
+                """,
+                (
+                    security_id,
+                )
+            ).fetchone()
+
+        return (
+            dict(row)
+            if row
+            else {}
+        )
+
+    def _previous_weekday(
+        self,
+        value
+    ):
+        while value.weekday() >= 5:
+            value -= timedelta(days=1)
+
+        return value
+
+    def _expected_complete_date(
+        self
+    ):
+        now_ny = datetime.now(
+            ZoneInfo(
+                "America/New_York"
+            )
+        )
+
+        candidate = now_ny.date()
+
+        #
+        # Before 17:00 ET, today's candle is
+        # deliberately treated as incomplete.
+        #
+        if (
+            now_ny.hour < 17
+            or candidate.weekday() >= 5
+        ):
+            candidate -= timedelta(days=1)
+
+        candidate = (
+            self._previous_weekday(
+                candidate
+            )
+        )
+
+        return int(
+            candidate.strftime(
+                "%Y%m%d"
+            )
+        )
+
+    def _synced_today(
+        self,
+        sync
+    ):
+        value = sync.get(
+            "last_sync_at"
+        )
+
+        if not value:
+            return False
+
+        try:
+            dt = datetime.fromisoformat(
+                str(value)
+            )
+
+            if dt.tzinfo is None:
+                dt = dt.replace(
+                    tzinfo=ZoneInfo("UTC")
+                )
+
+            dt_ny = dt.astimezone(
+                ZoneInfo(
+                    "America/New_York"
+                )
+            )
+
+            return (
+                dt_ny.date()
+                == datetime.now(
+                    ZoneInfo(
+                        "America/New_York"
+                    )
+                ).date()
+            )
+
+        except Exception:
+            return False
+
     def ensure_history(
         self,
         symbol,
@@ -303,32 +412,142 @@ class MarketHistoryStore:
         fetch_count=500
     ):
         """
-        Initial implementation:
+        Keep a persistent QFQ daily history cache.
 
-        If enough history exists locally,
-        don't call Moomoo again.
-
-        Otherwise perform one rate-limited
-        historical request and persist all
-        completed bars returned.
+        - Full fetch when history is insufficient.
+        - Incremental refresh when the latest completed
+          US trading session is missing.
+        - Avoid repeated refresh attempts on the same
+          calendar day when no newer completed bar exists.
         """
 
         existing = self.count(
             symbol
         )
 
-        if existing >= minimum_bars:
+        last_cached = self.last_date(
+            symbol
+        )
+
+        expected = (
+            self._expected_complete_date()
+        )
+
+        sync = self._sync_info(
+            symbol
+        )
+
+        #
+        # Healthy warm cache.
+        #
+        if (
+            existing >= minimum_bars
+            and last_cached is not None
+            and last_cached >= expected
+        ):
             return {
                 "symbol": symbol,
                 "source": "CACHE",
                 "bars": existing,
+                "last_cached_date":
+                    last_cached,
+                "expected_complete_date":
+                    expected,
+                "fresh": True,
             }
 
-        candles = (
-            self._fetch_history(
-                symbol,
-                fetch_count
+        #
+        # If we already tried refreshing this symbol
+        # today and no newer completed candle existed
+        # (holiday/data delay), do not repeatedly hit
+        # the historical API.
+        #
+        if (
+            existing >= minimum_bars
+            and self._synced_today(sync)
+        ):
+            return {
+                "symbol": symbol,
+                "source": "CACHE",
+                "bars": existing,
+                "last_cached_date":
+                    last_cached,
+                "expected_complete_date":
+                    expected,
+                "fresh": (
+                    last_cached is not None
+                    and last_cached >= expected
+                ),
+                "refresh_attempted_today":
+                    True,
+            }
+
+        #
+        # Warm cache but missing a recent completed bar:
+        # only fetch a small overlapping window.
+        #
+        if (
+            existing >= minimum_bars
+            and last_cached is not None
+        ):
+            last_text = str(
+                last_cached
             )
+
+            last_dt = datetime.strptime(
+                last_text,
+                "%Y%m%d"
+            ).date()
+
+            refresh_start = (
+                last_dt
+                - timedelta(days=10)
+            )
+
+            candles = self._fetch_history(
+                symbol,
+                20,
+                start_date=refresh_start
+            )
+
+            stored = self._store_completed(
+                symbol,
+                candles
+            )
+
+            return {
+                "symbol": symbol,
+                "source":
+                    "MOOMOO_REFRESH",
+                "bars": self.count(
+                    symbol
+                ),
+                "bars_received": len(
+                    candles.get(
+                        "candles",
+                        []
+                    )
+                    if isinstance(
+                        candles,
+                        dict
+                    )
+                    else candles
+                ),
+                "bars_stored": stored,
+                "last_cached_date":
+                    self.last_date(
+                        symbol
+                    ),
+                "expected_complete_date":
+                    expected,
+            }
+
+        #
+        # Cold / incomplete cache.
+        #
+        candles = self._fetch_history(
+            symbol,
+            fetch_count
         )
 
         stored = self._store_completed(
@@ -339,29 +558,31 @@ class MarketHistoryStore:
         return {
             "symbol": symbol,
             "source": "MOOMOO",
-            "bars_received":
-                len(
-                    (
-                        candles.get(
-                            "candles",
-                            []
-                        )
-                        if isinstance(
-                            candles,
-                            dict
-                        )
-                        else candles
-                    )
+            "bars_received": len(
+                candles.get(
+                    "candles",
+                    []
+                )
+                if isinstance(
+                    candles,
+                    dict
+                )
+                else candles
+            ),
+            "bars_stored": stored,
+            "last_cached_date":
+                self.last_date(
+                    symbol
                 ),
-
-            "bars_stored":
-                stored,
+            "expected_complete_date":
+                expected,
         }
 
     def _fetch_history(
         self,
         symbol,
-        count
+        count,
+        start_date=None
     ):
         with self._rate_lock:
 
@@ -392,8 +613,12 @@ class MarketHistoryStore:
                 # covers 500 trading sessions.
                 #
                 start = (
-                    today
-                    - timedelta(days=1100)
+                    start_date
+                    if start_date is not None
+                    else (
+                        today
+                        - timedelta(days=1100)
+                    )
                 )
 
                 return opend.get_candles(
@@ -435,8 +660,12 @@ class MarketHistoryStore:
                 ).date()
 
                 start = (
-                    today
-                    - timedelta(days=1100)
+                    start_date
+                    if start_date is not None
+                    else (
+                        today
+                        - timedelta(days=1100)
+                    )
                 )
 
                 return opend.get_candles(
@@ -653,7 +882,9 @@ class MarketHistoryStore:
                 """,
                 (
                     security_id,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(
+                        ZoneInfo("UTC")
+                    ).isoformat(),
                     max(
                         r[1]
                         for r in records

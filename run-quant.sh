@@ -45,11 +45,13 @@ print(d.get("status", "UNKNOWN"))
 
   clear
 
-  printf '%s' "$PROGRESS" | python3 - <<'PY'
-import sys
+  PROGRESS_JSON="$PROGRESS" python3 - <<'PY'
+import os
 import json
 
-d = json.load(sys.stdin)
+d = json.loads(
+    os.environ["PROGRESS_JSON"]
+)
 
 percent = float(
     d.get("percent") or 0
@@ -134,6 +136,11 @@ print()
 print(
     f"Analysis success: "
     f"{d.get('analysis_success', 0)}"
+)
+
+print(
+    f"Analysis skipped: "
+    f"{d.get('analysis_skipped', 0)}"
 )
 
 print(
