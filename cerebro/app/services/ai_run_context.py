@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from app.services.ai_context import ai_context
@@ -13,54 +14,27 @@ class AIRunContextBuilder:
 
     def _compact_position(self, item):
         keys = [
-            "symbol",
-            "name",
-            "quantity",
-            "qty",
-            "available_qty",
-            "average_cost",
-            "avg_cost",
-            "current_price",
-            "market_value",
-            "unrealized_pnl",
-            "unrealized_pnl_pct",
+            "symbol", "name", "quantity", "qty", "available_qty",
+            "average_cost", "avg_cost", "current_price", "market_value",
+            "unrealized_pnl", "unrealized_pnl_pct",
         ]
-        return {
-            key: item.get(key)
-            for key in keys
-            if item.get(key) is not None
-        }
+        return {key: item.get(key) for key in keys if item.get(key) is not None}
 
     def _compact_order(self, item):
         keys = [
-            "order_id",
-            "symbol",
-            "side",
-            "quantity",
-            "qty",
-            "order_type",
-            "price",
-            "status",
-            "filled_qty",
+            "order_id", "symbol", "side", "quantity", "qty", "order_type",
+            "price", "status", "filled_qty",
         ]
-        return {
-            key: item.get(key)
-            for key in keys
-            if item.get(key) is not None
-        }
+        return {key: item.get(key) for key in keys if item.get(key) is not None}
 
     def _market_context(self):
         raw = opend.get_market_states()
-
         if isinstance(raw, list):
             states = raw
         elif isinstance(raw, dict):
             states = (
-                raw.get("markets")
-                or raw.get("states")
-                or raw.get("market_states")
-                or raw.get("data")
-                or []
+                raw.get("markets") or raw.get("states") or
+                raw.get("market_states") or raw.get("data") or []
             )
             if isinstance(states, dict):
                 states = [
@@ -75,11 +49,8 @@ class AIRunContextBuilder:
             if not isinstance(item, dict):
                 continue
             market = str(
-                item.get("market")
-                or item.get("id")
-                or item.get("code")
-                or item.get("name")
-                or ""
+                item.get("market") or item.get("id") or item.get("code") or
+                item.get("name") or ""
             ).upper()
             if market == "US":
                 us = item
@@ -91,35 +62,98 @@ class AIRunContextBuilder:
             "state": us,
         }
 
+    def _research_many_with_progress(self, requests, progress_callback=None):
+        if not requests:
+            return {}
+
+        total = len(requests)
+        complete = 0
+        output = {}
+
+        def emit(**values):
+            if progress_callback:
+                progress_callback(total=total, complete=complete, **values)
+
+        emit(stage="RESEARCH", current_symbol=None, status="STARTING")
+
+        with ThreadPoolExecutor(max_workers=ai_web_research.max_workers) as executor:
+            futures = {
+                executor.submit(
+                    ai_web_research.research,
+                    symbol=item["symbol"],
+                    company_name=item.get("company_name"),
+                    quant_context=item.get("quant_context") or {},
+                    relationships=item.get("relationships") or [],
+                ): item["symbol"]
+                for item in requests
+            }
+
+            emit(
+                stage="RESEARCH",
+                current_symbol=None,
+                status="RUNNING",
+                in_flight=min(total, ai_web_research.max_workers),
+            )
+
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    output[symbol] = future.result()
+                except Exception as exc:
+                    output[symbol] = {
+                        "symbol": symbol,
+                        "status": "ERROR",
+                        "error": str(exc),
+                        "research": None,
+                        "sources": [],
+                    }
+                complete += 1
+                ready = sum(
+                    1 for item in output.values()
+                    if (item or {}).get("status") == "READY"
+                )
+                errors = sum(
+                    1 for item in output.values()
+                    if (item or {}).get("status") == "ERROR"
+                )
+                emit(
+                    stage="RESEARCH",
+                    current_symbol=symbol,
+                    status=(output[symbol] or {}).get("status") or "DONE",
+                    ready=ready,
+                    errors=errors,
+                    in_flight=max(0, min(total - complete, ai_web_research.max_workers)),
+                )
+
+        emit(
+            stage="RESEARCH_COMPLETE",
+            current_symbol=None,
+            status="COMPLETE",
+            ready=sum(1 for item in output.values() if (item or {}).get("status") == "READY"),
+            errors=sum(1 for item in output.values() if (item or {}).get("status") == "ERROR"),
+            in_flight=0,
+        )
+        return output
+
     def build(
         self,
         *,
         run_type="MANUAL",
         max_candidates=None,
         enrich_research=None,
+        research_progress_callback=None,
     ):
-        """Build deterministic decision context.
-
-        Holdings, pending orders and the complete latest quant set are always
-        mandatory. Watchlist symbols only fill spare capacity. Expensive web
-        research can be disabled for structural validation or inspection.
-        """
+        """Build deterministic decision context with optional live research telemetry."""
 
         if max_candidates is None:
             max_candidates = int(settings.get("ai.context.max_candidates"))
-
         if enrich_research is None:
             enrich_research = settings.get_bool("ai.research.enabled")
 
-        decision_limit = int(
-            settings.get("ai.context.recent_decisions_per_symbol")
-        )
-        rejection_limit = int(
-            settings.get("ai.context.recent_rejections_per_symbol")
-        )
+        decision_limit = int(settings.get("ai.context.recent_decisions_per_symbol"))
+        rejection_limit = int(settings.get("ai.context.recent_rejections_per_symbol"))
         include_watchlist = settings.get_bool("ai.context.include_watchlist")
 
-        # Broker calls happen once per AI run, not once per symbol.
         account = trading.get_account_summary()
         positions_raw = trading.get_positions()
         orders_raw = trading.get_orders()
@@ -127,35 +161,24 @@ class AIRunContextBuilder:
         watch_items = []
         if include_watchlist:
             watch_items = [
-                item
-                for item in watchlist.list()
+                item for item in watchlist.list()
                 if item.get("enabled", True)
                 and str(item.get("market") or "").upper() in {"", "US"}
                 and str(item.get("symbol", "")).upper().startswith("US.")
             ]
 
-        positions = [
-            self._compact_position(item)
-            for item in positions_raw
-        ]
-
+        positions = [self._compact_position(item) for item in positions_raw]
         latest_quant_data = latest_quant.load() or {}
         quant_candidates = latest_quant.candidates()
         quant_by_symbol = {
             item.get("symbol"): item
-            for item in quant_candidates
-            if item.get("symbol")
+            for item in quant_candidates if item.get("symbol")
         }
         quant_symbols = set(quant_by_symbol.keys())
 
         terminal_states = {
-            "FILLED_ALL",
-            "CANCELLED_ALL",
-            "CANCELED_ALL",
-            "FAILED",
-            "DELETED",
+            "FILLED_ALL", "CANCELLED_ALL", "CANCELED_ALL", "FAILED", "DELETED",
         }
-
         pending_orders = [
             self._compact_order(item)
             for item in orders_raw
@@ -165,55 +188,30 @@ class AIRunContextBuilder:
         symbols = []
 
         def add_symbol(symbol):
-            if (
-                symbol
-                and str(symbol).startswith("US.")
-                and symbol not in symbols
-            ):
+            if symbol and str(symbol).startswith("US.") and symbol not in symbols:
                 symbols.append(symbol)
 
         for item in positions_raw:
             add_symbol(item.get("symbol"))
-
         for item in pending_orders:
             add_symbol(item.get("symbol"))
-
         for item in quant_candidates:
             add_symbol(item.get("symbol"))
 
         mandatory_count = len(symbols)
         optional_slots = max(0, int(max_candidates) - mandatory_count)
-
         optional_watch_symbols = []
         for item in watch_items:
             symbol = item.get("symbol")
-            if (
-                symbol
-                and symbol not in symbols
-                and symbol not in optional_watch_symbols
-            ):
+            if symbol and symbol not in symbols and symbol not in optional_watch_symbols:
                 optional_watch_symbols.append(symbol)
-
         symbols.extend(optional_watch_symbols[:optional_slots])
 
-        held_symbols = {
-            item.get("symbol")
-            for item in positions_raw
-            if item.get("symbol")
-        }
-        watch_symbols = {
-            item.get("symbol")
-            for item in watch_items
-            if item.get("symbol")
-        }
-        pending_symbols = {
-            item.get("symbol")
-            for item in pending_orders
-            if item.get("symbol")
-        }
+        held_symbols = {item.get("symbol") for item in positions_raw if item.get("symbol")}
+        watch_symbols = {item.get("symbol") for item in watch_items if item.get("symbol")}
+        pending_symbols = {item.get("symbol") for item in pending_orders if item.get("symbol")}
 
         research_requests = []
-
         if enrich_research:
             for symbol in symbols:
                 if symbol not in held_symbols and symbol not in quant_symbols:
@@ -222,14 +220,9 @@ class AIRunContextBuilder:
                 quant_item = quant_by_symbol.get(symbol) or {}
                 metrics = quant_item.get("metrics") or {}
                 company_name = quant_item.get("name")
-
                 if not company_name:
                     position_item = next(
-                        (
-                            item
-                            for item in positions_raw
-                            if item.get("symbol") == symbol
-                        ),
+                        (item for item in positions_raw if item.get("symbol") == symbol),
                         None,
                     )
                     if position_item:
@@ -261,14 +254,12 @@ class AIRunContextBuilder:
                     "quant_context": quant_research_context,
                 })
 
-        research_by_symbol = (
-            ai_web_research.research_many(research_requests)
-            if research_requests
-            else {}
-        )
+        research_by_symbol = self._research_many_with_progress(
+            research_requests,
+            progress_callback=research_progress_callback,
+        ) if research_requests else {}
 
         candidates = []
-
         for symbol in symbols:
             if symbol in held_symbols and symbol in watch_symbols:
                 relationship = "HELD_AND_WATCHLIST"
@@ -290,7 +281,6 @@ class AIRunContextBuilder:
             quant_item = quant_by_symbol.get(symbol)
             quant_context = None
             event_review = None
-
             if quant_item:
                 metrics = quant_item.get("metrics") or {}
                 quant_context = {
@@ -299,24 +289,13 @@ class AIRunContextBuilder:
                     "metrics": metrics,
                     "discovery_sources": quant_item.get("sources"),
                 }
-
                 requires_review = bool(
-                    metrics.get("requires_event_review")
-                    or metrics.get("discontinuity_flag")
+                    metrics.get("requires_event_review") or metrics.get("discontinuity_flag")
                 )
-
                 event_review = {
                     "required": requires_review,
-                    "status": (
-                        "PENDING_AI_REVIEW"
-                        if requires_review
-                        else "NOT_REQUIRED"
-                    ),
-                    "reason": (
-                        "EXTREME_PRICE_MOVE"
-                        if requires_review
-                        else None
-                    ),
+                    "status": "PENDING_AI_REVIEW" if requires_review else "NOT_REQUIRED",
+                    "reason": "EXTREME_PRICE_MOVE" if requires_review else None,
                     "events": metrics.get("discontinuity_events") or [],
                 }
 
@@ -351,10 +330,7 @@ class AIRunContextBuilder:
                 "scope": "US",
                 "candidate_count": len(candidates),
                 "mandatory_candidate_count": mandatory_count,
-                "optional_watchlist_count": max(
-                    0,
-                    len(candidates) - mandatory_count,
-                ),
+                "optional_watchlist_count": max(0, len(candidates) - mandatory_count),
                 "research_enabled": bool(enrich_research),
                 "research_request_count": len(research_requests),
             },
