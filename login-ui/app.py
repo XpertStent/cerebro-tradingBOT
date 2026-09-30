@@ -4,6 +4,8 @@ from moomoo import OpenQuoteContext, RET_OK
 import socket
 import threading
 import os
+import urllib.request
+import json
 
 app = Flask(__name__)
 sock = Sock(app)
@@ -569,54 +571,37 @@ def terminal_ws(ws):
 
 @app.route("/api-status")
 def api_status():
-    ctx = None
-
     try:
-        ctx = OpenQuoteContext(host=OPEND_HOST, port=OPEND_API_PORT)
+        req = urllib.request.Request(
+            "http://opend:7000/system/status",
+            headers={"Accept": "application/json"}
+        )
 
-        ret, state = ctx.get_global_state()
+        with urllib.request.urlopen(req, timeout=3) as response:
+            data = json.loads(response.read().decode("utf-8"))
 
-        if ret != RET_OK:
-            return jsonify(
-                ready=False,
-                error=str(state),
-                program_status="Unknown"
-            )
-
-        if not state.get("qot_logined", False):
-            return jsonify(
-                ready=False,
-                error="Waiting for OpenD login",
-                program_status=str(state.get("program_status_type", "Unknown"))
-            )
-
-        ret, snapshot = ctx.get_market_snapshot(["US.AAPL"])
-
-        if ret != RET_OK:
-            return jsonify(
-                ready=False,
-                error=str(snapshot),
-                program_status=str(state.get("program_status_type", "Unknown"))
-            )
+        ready = (
+            data.get("status") == "READY"
+            and data.get("opend", {}).get("quote_server") is True
+        )
 
         return jsonify(
-            ready=True,
-            program_status=str(state.get("program_status_type", "Ready"))
+            ready=ready,
+            program_status=data.get(
+                "opend", {}
+            ).get(
+                "program_status",
+                "Unknown"
+            ),
+            error=None if ready else "Waiting for OpenD login"
         )
 
     except Exception as e:
         return jsonify(
             ready=False,
-            error=str(e),
-            program_status="Unknown"
+            program_status="Unknown",
+            error=f"Cerebro unavailable: {e}"
         )
-
-    finally:
-        if ctx:
-            try:
-                ctx.close()
-            except Exception:
-                pass
 
 
 @app.route("/captcha-status")
