@@ -1,0 +1,315 @@
+.settingsShell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.settingsNav,
+.settingsContent {
+  background: var(--panel, #121821);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 16px;
+}
+
+.settingsNav {
+  position: sticky;
+  top: 18px;
+  padding: 12px;
+}
+
+.settingsNavTitle {
+  padding: 8px 10px 12px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  opacity: .55;
+  font-weight: 700;
+}
+
+.settingsNav button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: 9px;
+  padding: 10px 11px;
+  margin: 2px 0;
+  cursor: pointer;
+}
+
+.settingsNav button:hover,
+.settingsNav button.active {
+  background: rgba(255,255,255,.075);
+}
+
+.settingsNav button.active {
+  font-weight: 700;
+}
+
+.settingsContent {
+  padding: 20px;
+  min-width: 0;
+}
+
+.settingsToolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.settingsToolbar h2,
+.settingsGroup h3 {
+  margin: 0;
+}
+
+.settingsToolbar p {
+  margin: 5px 0 0;
+  opacity: .6;
+  font-size: 13px;
+}
+
+.settingsActions {
+  display: flex;
+  gap: 9px;
+}
+
+.settingsActions button,
+.settingsGroupHeader {
+  font: inherit;
+}
+
+.primaryButton,
+.secondaryButton {
+  border-radius: 9px;
+  border: 1px solid rgba(255,255,255,.1);
+  padding: 9px 12px;
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  cursor: pointer;
+}
+
+.primaryButton {
+  background: #f5f7fa;
+  color: #111827;
+}
+
+.secondaryButton {
+  background: transparent;
+  color: inherit;
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.settingsMessage,
+.settingsNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.035);
+}
+
+.settingsMessage.ok { border-color: rgba(74,222,128,.25); }
+.settingsMessage.error { border-color: rgba(248,113,113,.35); }
+.settingsNotice span { display: block; opacity: .65; font-size: 13px; margin-top: 2px; }
+
+.settingsGroup {
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 13px;
+  overflow: hidden;
+  margin-top: 14px;
+}
+
+.settingsGroupHeader {
+  width: 100%;
+  border: 0;
+  color: inherit;
+  background: rgba(255,255,255,.025);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 15px;
+  text-align: left;
+}
+
+.settingsGroupHeader.clickable { cursor: pointer; }
+.settingsGroupHeader svg { transition: transform .15s ease; }
+.settingsGroupHeader svg.expanded { transform: rotate(180deg); }
+
+.weightOk,
+.weightBad {
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.weightOk { color: #86efac; }
+.weightBad { color: #fca5a5; }
+
+.settingRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 330px);
+  gap: 24px;
+  align-items: center;
+  padding: 15px;
+  border-top: 1px solid rgba(255,255,255,.06);
+}
+
+.settingRow:first-child { border-top: 0; }
+.settingRow.futureSetting { background: rgba(255,255,255,.012); }
+
+.settingLabelLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settingCopy label {
+  font-weight: 650;
+}
+
+.settingCopy p {
+  margin: 5px 0 6px;
+  opacity: .62;
+  line-height: 1.4;
+  font-size: 13px;
+}
+
+.settingCopy code {
+  font-size: 11px;
+  opacity: .38;
+}
+
+.futurePill,
+.readonlyPill,
+.secretControl span {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 3px 7px;
+}
+
+.futurePill { background: rgba(96,165,250,.13); color: #93c5fd; }
+.readonlyPill { background: rgba(255,255,255,.07); opacity: .7; }
+
+.settingControlWrap input,
+.settingControlWrap select {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(0,0,0,.18);
+  border: 1px solid rgba(255,255,255,.1);
+  color: inherit;
+  border-radius: 9px;
+  padding: 9px 10px;
+  outline: none;
+}
+
+.settingControlWrap input:focus,
+.settingControlWrap select:focus {
+  border-color: rgba(147,197,253,.6);
+}
+
+.settingControlWrap input:disabled,
+.settingControlWrap select:disabled {
+  opacity: .5;
+}
+
+.inputWithUnit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inputWithUnit span {
+  min-width: 42px;
+  opacity: .6;
+  font-size: 12px;
+}
+
+.settingToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.settingToggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggleTrack {
+  width: 38px;
+  height: 21px;
+  border-radius: 99px;
+  background: rgba(255,255,255,.13);
+  padding: 2px;
+  box-sizing: border-box;
+  transition: background .15s ease;
+}
+
+.toggleTrack span {
+  display: block;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: white;
+  transition: transform .15s ease;
+}
+
+.settingToggle input:checked + .toggleTrack {
+  background: #22c55e;
+}
+
+.settingToggle input:checked + .toggleTrack span {
+  transform: translateX(17px);
+}
+
+.settingToggle b {
+  font-size: 12px;
+  font-weight: 650;
+  opacity: .7;
+}
+
+.secretControl {
+  display: grid;
+  gap: 6px;
+}
+
+.secretControl span {
+  width: max-content;
+  padding-left: 0;
+}
+
+.secretControl .configured { color: #86efac; }
+.secretControl .notConfigured { color: #fca5a5; }
+
+.settingsLoading {
+  padding: 24px;
+  opacity: .65;
+}
+
+@media (max-width: 900px) {
+  .settingsShell { grid-template-columns: 1fr; }
+  .settingsNav { position: static; display: flex; overflow-x: auto; gap: 4px; }
+  .settingsNavTitle { display: none; }
+  .settingsNav button { width: auto; white-space: nowrap; }
+  .settingRow { grid-template-columns: 1fr; gap: 10px; }
+  .settingsToolbar { align-items: flex-start; flex-direction: column; }
+}
