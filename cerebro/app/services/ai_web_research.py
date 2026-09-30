@@ -520,30 +520,66 @@ class AIWebResearchService:
         response,
     ):
         sources = {}
-        raw = response.model_dump()
 
         for item in (
-            raw.get("output")
+            getattr(
+                response,
+                "output",
+                None,
+            )
             or []
         ):
-            if (
-                item.get("type")
-                != "web_search_call"
-            ):
-                continue
-
-            action = (
-                item.get("action")
-                or {}
+            item_type = getattr(
+                item,
+                "type",
+                None,
             )
 
-            for source in (
-                action.get("sources")
-                or []
-            ):
-                raw_url = source.get(
-                    "url"
+            if item_type != "web_search_call":
+                continue
+
+            action = getattr(
+                item,
+                "action",
+                None,
+            )
+
+            if not action:
+                continue
+
+            action_sources = getattr(
+                action,
+                "sources",
+                None,
+            )
+
+            if not action_sources:
+                continue
+
+            for source in action_sources:
+                raw_url = getattr(
+                    source,
+                    "url",
+                    None,
                 )
+
+                title = getattr(
+                    source,
+                    "title",
+                    None,
+                )
+
+                if raw_url is None and isinstance(
+                    source,
+                    dict,
+                ):
+                    raw_url = source.get(
+                        "url"
+                    )
+
+                    title = source.get(
+                        "title"
+                    )
 
                 url = self._canonical_url(
                     raw_url
@@ -554,9 +590,7 @@ class AIWebResearchService:
 
                 sources[url] = {
                     "title":
-                        source.get(
-                            "title"
-                        ),
+                        title,
 
                     "url":
                         url,
@@ -972,6 +1006,53 @@ Return only the requested structured result.
         research = json.loads(
             response.output_text
         )
+
+        #
+        # Price-anomaly classification is only meaningful when
+        # Cerebro actually detected something requiring review.
+        #
+        metrics = (
+            quant_context.get(
+                "metrics"
+            )
+            or {}
+        )
+
+        discontinuity_events = (
+            metrics.get(
+                "discontinuity_events"
+            )
+            or []
+        )
+
+        requires_event_review = bool(
+            metrics.get(
+                "requires_event_review"
+            )
+            or discontinuity_events
+        )
+
+        if not requires_event_review:
+            research[
+                "price_anomaly_assessment"
+            ] = {
+                "classification":
+                    "NO_EXTREME_MOVE",
+
+                "confidence":
+                    1.0,
+
+                "explanation":
+                    (
+                        "Cerebro did not supply an "
+                        "extreme or discontinuous "
+                        "price move requiring "
+                        "event review."
+                    ),
+
+                "source_urls":
+                    [],
+            }
 
         consulted_sources = (
             self._extract_consulted_sources(
