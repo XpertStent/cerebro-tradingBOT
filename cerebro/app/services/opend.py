@@ -177,7 +177,6 @@ class OpenDClient:
     ):
 
         symbol = self.normalize_symbol(symbol)
-
         timeframe = timeframe.lower()
 
         if timeframe not in self.TIMEFRAMES:
@@ -195,39 +194,31 @@ class OpenDClient:
                     code=symbol,
                     ktype=self.TIMEFRAMES[timeframe],
                     autype=AuType.QFQ,
-                    max_count=count
+                    max_count=1000
                 )
             )
 
             if ret != RET_OK:
                 raise RuntimeError(str(data))
 
+            # Moomoo may return the oldest rows first.
+            # Always return the latest N candles.
+            data = data.sort_values(
+                by="time_key"
+            ).tail(count)
+
             candles = []
 
             for _, row in data.iterrows():
 
                 candles.append({
-                    "time": self._clean(
-                        row.get("time_key")
-                    ),
-                    "open": self._clean(
-                        row.get("open")
-                    ),
-                    "high": self._clean(
-                        row.get("high")
-                    ),
-                    "low": self._clean(
-                        row.get("low")
-                    ),
-                    "close": self._clean(
-                        row.get("close")
-                    ),
-                    "volume": self._clean(
-                        row.get("volume")
-                    ),
-                    "turnover": self._clean(
-                        row.get("turnover")
-                    )
+                    "time": self._clean(row.get("time_key")),
+                    "open": self._clean(row.get("open")),
+                    "high": self._clean(row.get("high")),
+                    "low": self._clean(row.get("low")),
+                    "close": self._clean(row.get("close")),
+                    "volume": self._clean(row.get("volume")),
+                    "turnover": self._clean(row.get("turnover"))
                 })
 
             return {
