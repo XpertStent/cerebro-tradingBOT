@@ -4,6 +4,12 @@ from app.services.ai_context import ai_context
 from app.services.opend import opend
 from app.services.trading import trading
 from app.services.watchlist import watchlist
+from app.services.latest_quant import (
+    latest_quant
+)
+from app.services.news_enrichment import (
+    news_enrichment
+)
 
 
 class AIRunContextBuilder:
@@ -142,6 +148,29 @@ class AIRunContextBuilder:
             for item in positions_raw
         ]
 
+        #
+        # Latest successful quant Top N.
+        #
+        latest_quant_data = (
+            latest_quant.load()
+            or {}
+        )
+
+        quant_candidates = (
+            latest_quant.candidates()
+        )
+
+        quant_by_symbol = {
+            item.get("symbol"):
+                item
+            for item in quant_candidates
+            if item.get("symbol")
+        }
+
+        quant_symbols = set(
+            quant_by_symbol.keys()
+        )
+
         pending_orders = []
 
         terminal_states = {
@@ -202,6 +231,21 @@ class AIRunContextBuilder:
             ):
                 symbols.append(symbol)
 
+        #
+        # Then append the latest quant Top N.
+        # Holdings/pending orders therefore cannot be
+        # displaced by quant candidates.
+        #
+        for item in quant_candidates:
+            symbol = item.get("symbol")
+
+            if (
+                symbol
+                and symbol.startswith("US.")
+                and symbol not in symbols
+            ):
+                symbols.append(symbol)
+
         symbols = symbols[
             :max_candidates
         ]
@@ -217,6 +261,90 @@ class AIRunContextBuilder:
             for item in watch_items
             if item.get("symbol")
         }
+
+        #
+        # Build web/news enrichment requests only for:
+        #
+        #   1. current holdings
+        #   2. latest quant candidates
+        #
+        # Plain watchlist-only names are intentionally
+        # excluded to avoid unnecessary web traffic.
+        #
+        enrichment_requests = []
+
+        for symbol in symbols:
+            if (
+                symbol not in held_symbols
+                and symbol not in quant_symbols
+            ):
+                continue
+
+            quant_item = (
+                quant_by_symbol.get(
+                    symbol,
+                    {}
+                )
+            )
+
+            metrics = (
+                quant_item.get(
+                    "metrics"
+                )
+                or {}
+            )
+
+            event_dates = [
+                event.get("date")
+                for event in (
+                    metrics.get(
+                        "discontinuity_events"
+                    )
+                    or []
+                )
+                if event.get("date")
+            ]
+
+            company_name = (
+                quant_item.get("name")
+            )
+
+            if not company_name:
+                position_item = next(
+                    (
+                        item
+                        for item
+                        in positions_raw
+                        if item.get(
+                            "symbol"
+                        ) == symbol
+                    ),
+                    None
+                )
+
+                if position_item:
+                    company_name = (
+                        position_item.get(
+                            "name"
+                        )
+                    )
+
+            enrichment_requests.append({
+                "symbol":
+                    symbol,
+
+                "company_name":
+                    company_name,
+
+                "event_dates":
+                    event_dates,
+            })
+
+        news_by_symbol = (
+            news_enrichment.enrich_many(
+                enrichment_requests
+            )
+        )
 
         candidates = []
 
@@ -251,11 +379,126 @@ class AIRunContextBuilder:
                 )
             )
 
+            quant_item = (
+                quant_by_symbol.get(
+                    symbol
+                )
+            )
+
+            quant_context = None
+            event_review = None
+
+            if quant_item:
+                metrics = (
+                    quant_item.get(
+                        "metrics"
+                    )
+                    or {}
+                )
+
+                quant_context = {
+                    "rank":
+                        quant_item.get(
+                            "rank"
+                        ),
+
+                    "scores":
+                        quant_item.get(
+                            "quant"
+                        ),
+
+                    "metrics":
+                        metrics,
+
+                    "discovery_sources":
+                        quant_item.get(
+                            "sources"
+                        ),
+                }
+
+                requires_review = bool(
+                    metrics.get(
+                        "requires_event_review"
+                    )
+                    or metrics.get(
+                        "discontinuity_flag"
+                    )
+                )
+
+                event_review = {
+                    "required":
+                        requires_review,
+
+                    "status":
+                        (
+                            "PENDING_AI_REVIEW"
+                            if requires_review
+                            else "NOT_REQUIRED"
+                        ),
+
+                    "reason":
+                        (
+                            "EXTREME_PRICE_MOVE"
+                            if requires_review
+                            else None
+                        ),
+
+                    "events":
+                        (
+                            metrics.get(
+                                "discontinuity_events"
+                            )
+                            or []
+                        ),
+                }
+
+            relationships = []
+
+            if symbol in held_symbols:
+                relationships.append(
+                    "HELD"
+                )
+
+            if symbol in watch_symbols:
+                relationships.append(
+                    "WATCHLIST"
+                )
+
+            if symbol in quant_symbols:
+                relationships.append(
+                    "QUANT_CANDIDATE"
+                )
+
+            if any(
+                order.get(
+                    "symbol"
+                ) == symbol
+                for order
+                in pending_orders
+            ):
+                relationships.append(
+                    "PENDING_ORDER"
+                )
+
             candidates.append({
                 "symbol": symbol,
 
                 "relationship":
                     relationship,
+
+                "relationships":
+                    relationships,
+
+                "quant":
+                    quant_context,
+
+                "news_context":
+                    news_by_symbol.get(
+                        symbol
+                    ),
+
+                "event_review":
+                    event_review,
 
                 #
                 # Deliberately no portfolio here.
@@ -326,6 +569,23 @@ class AIRunContextBuilder:
 
                 "pending_orders":
                     pending_orders,
+            },
+
+            "quant_context": {
+                "run_id":
+                    latest_quant_data.get(
+                        "run_id"
+                    ),
+
+                "generated_at":
+                    latest_quant_data.get(
+                        "generated_at"
+                    ),
+
+                "candidate_count":
+                    len(
+                        quant_candidates
+                    ),
             },
 
             "candidates":
