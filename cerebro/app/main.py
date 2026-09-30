@@ -13,6 +13,7 @@ from app.api.ai_memory import router as ai_memory_router
 from app.api.scanner import router as scanner_router
 from app.api.metrics import router as metrics_router
 from app.api.quant_screener import router as quant_screener_router
+from app.api.history import router as history_router
 
 
 NAME = config["cerebro"]["name"]
@@ -36,6 +37,7 @@ app.include_router(ai_memory_router)
 app.include_router(scanner_router)
 app.include_router(metrics_router)
 app.include_router(quant_screener_router)
+app.include_router(history_router)
 
 
 @app.get("/", tags=["System"])
