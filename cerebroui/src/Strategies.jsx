@@ -34,10 +34,11 @@ export default function Strategies() {
 
   const decisions = bundle?.ai?.decision?.decisions || [];
   const proposals = bundle?.execution?.proposals || [];
-  const quantCandidates = bundle?.quant?.result?.candidates || latestQuant?.candidates || [];
+  const quantCandidates = latestQuant?.candidates || [];
   const approvalMode = bundle?.execution?.approval_mode;
   const pendingCount = proposals.filter(item => item.status === "PENDING_APPROVAL").length;
   const autoExecuted = approvalMode === "AUTO";
+  const running = progress?.status === "RUNNING" || progress?.status === "QUEUED";
 
   const proposalBySymbol = useMemo(() => {
     const map = new Map();
@@ -55,10 +56,8 @@ export default function Strategies() {
       if (aiRes.ok) {
         const data = await aiRes.json();
         const next = unwrapLatest(data);
-        if (next) {
-          setBundle(next);
-          setRunId(next.run_id || data?.result?.run_id || null);
-        }
+        setBundle(next);
+        if (next) setRunId(next.run_id || data?.result?.run_id || null);
       }
 
       if (quantRes.ok) {
@@ -74,7 +73,10 @@ export default function Strategies() {
       cache: "no-store"
     });
     const data = await response.json();
-    if (response.ok && data.result) setBundle(data.result);
+    if (response.ok && data.result) {
+      setBundle(data.result);
+      if (data.result?.quant?.result) setLatestQuant(data.result.quant.result);
+    }
   }
 
   async function startManualRun() {
@@ -114,6 +116,14 @@ export default function Strategies() {
         throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
       }
       setBundle(data);
+      setProgress(previous => previous ? {
+        ...previous,
+        status: "COMPLETE",
+        stage: "COMPLETE",
+        message: action === "approve"
+          ? "Decision approved and execution attempt complete"
+          : "Decision rejected — no pending AI orders executed"
+      } : previous);
       setMessage({
         kind: "ok",
         text: action === "approve"
@@ -159,6 +169,7 @@ export default function Strategies() {
   useEffect(() => {
     if (!runId) return;
     let cancelled = false;
+    let timer = null;
 
     async function poll() {
       try {
@@ -178,14 +189,17 @@ export default function Strategies() {
           setMessage({ kind: "error", text: data.error || "AI workflow failed." });
           return;
         }
-        setTimeout(poll, 1200);
+        timer = setTimeout(poll, 1200);
       } catch (_) {
-        if (!cancelled) setTimeout(poll, 1800);
+        if (!cancelled) timer = setTimeout(poll, 1800);
       }
     }
 
     poll();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [runId]);
 
   const statusClass = progress?.status === "FAILED"
@@ -204,19 +218,19 @@ export default function Strategies() {
           <p>Run the complete quant → research → AI → deterministic risk → approval workflow.</p>
         </div>
         <div className="aiHeroActions">
-          <button className="aiPrimary" onClick={startManualRun} disabled={busy || (progress && progress.status === "RUNNING")}>
+          <button className="aiPrimary" onClick={startManualRun} disabled={busy || running}>
             <Play size={15}/>
-            {progress?.status === "RUNNING" ? "Running…" : "Run AI Decision"}
+            {running ? "Running…" : "Run AI Decision"}
           </button>
-          <button className="aiSecondary" onClick={() => loadLatest()} disabled={busy}>
+          <button className="aiSecondary" onClick={loadLatest} disabled={busy || running}>
             <RefreshCw size={15}/>
             Refresh
           </button>
-          <button className="aiDanger" onClick={() => clearStored("quant")} disabled={busy}>
+          <button className="aiDanger" onClick={() => clearStored("quant")} disabled={busy || running}>
             <Trash2 size={14}/>
             Clear Quant
           </button>
-          <button className="aiDanger" onClick={() => clearStored("ai")} disabled={busy}>
+          <button className="aiDanger" onClick={() => clearStored("ai")} disabled={busy || running}>
             <Trash2 size={14}/>
             Clear AI Result
           </button>
@@ -246,6 +260,10 @@ export default function Strategies() {
           <div className="aiMetric"><span>Quant Stage</span><strong>{progress?.quant?.stage || "—"}</strong></div>
           <div className="aiMetric"><span>Quant Progress</span><strong>{Number(progress?.quant?.percent || 0).toFixed(1)}%</strong></div>
           <div className="aiMetric"><span>Current Symbol</span><strong>{progress?.quant?.current_symbol || "—"}</strong></div>
+          <div className="aiMetric"><span>AI Stage</span><strong>{progress?.ai?.stage || "—"}</strong></div>
+          <div className="aiMetric"><span>AI Candidates</span><strong>{progress?.ai?.candidate_count ?? "—"}</strong></div>
+          <div className="aiMetric"><span>Research Ready</span><strong>{progress?.ai ? `${progress.ai.research_ready || 0}/${progress.ai.research_request_count || 0}` : "—"}</strong></div>
+          <div className="aiMetric"><span>Research Errors</span><strong>{progress?.ai?.research_errors ?? "—"}</strong></div>
         </div>
       </section>
 
@@ -270,8 +288,8 @@ export default function Strategies() {
       <section className="aiPanel">
         <div className="aiPanelHeader">
           <div>
-            <h3>Quant Results</h3>
-            <p>{quantCandidates.length ? `${quantCandidates.length} ranked candidates available.` : "No stored quant result."}</p>
+            <h3>Stored Quant Results</h3>
+            <p>{quantCandidates.length ? `${quantCandidates.length} ranked candidates in the latest quant artifact.` : "No stored quant result."}</p>
           </div>
         </div>
 
