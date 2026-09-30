@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import "./style.css";
+import Markets from "./Markets";
 
 const nav = [
   ["Dashboard", LayoutDashboard],
@@ -120,6 +121,8 @@ function App() {
             orders={orders}
             openOrders={openOrders}
           />
+        ) : activePage === "Markets" ? (
+          <Markets />
         ) : (
           <div className="placeholder">
             <h2>{activePage}</h2>

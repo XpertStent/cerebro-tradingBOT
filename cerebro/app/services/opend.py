@@ -232,6 +232,99 @@ class OpenDClient:
             ctx.close()
 
 
+    def get_market_states(self):
+        """
+        Return all market states exposed by OpenD plus
+        human-readable metadata for common markets.
+        """
+
+        metadata = {
+            "market_us": {
+                "id": "US",
+                "name": "United States",
+                "timezone": "America/New_York",
+                "regular_session": "09:30 - 16:00"
+            },
+            "market_hk": {
+                "id": "HK",
+                "name": "Hong Kong",
+                "timezone": "Asia/Hong_Kong",
+                "regular_session": "09:30 - 12:00 / 13:00 - 16:00"
+            },
+            "market_sh": {
+                "id": "SH",
+                "name": "Shanghai",
+                "timezone": "Asia/Shanghai",
+                "regular_session": "09:30 - 11:30 / 13:00 - 15:00"
+            },
+            "market_sz": {
+                "id": "SZ",
+                "name": "Shenzhen",
+                "timezone": "Asia/Shanghai",
+                "regular_session": "09:30 - 11:30 / 13:00 - 15:00"
+            },
+            "market_jp": {
+                "id": "JP",
+                "name": "Japan",
+                "timezone": "Asia/Tokyo",
+                "regular_session": "09:00 - 11:30 / 12:30 - 15:30"
+            },
+            "market_sg": {
+                "id": "SG",
+                "name": "Singapore",
+                "timezone": "Asia/Singapore",
+                "regular_session": "09:00 - 12:00 / 13:00 - 17:00"
+            },
+            "market_my": {
+                "id": "MY",
+                "name": "Malaysia",
+                "timezone": "Asia/Kuala_Lumpur",
+                "regular_session": "09:00 - 12:30 / 14:30 - 17:00"
+            }
+        }
+
+        ctx = self._context()
+
+        try:
+            ret, data = ctx.get_global_state()
+
+            if ret != RET_OK:
+                raise RuntimeError(str(data))
+
+            markets = []
+
+            # Don't assume which markets the installed OpenD build exposes.
+            # Discover every market_* value dynamically.
+            for key, value in data.items():
+
+                if not key.startswith("market_"):
+                    continue
+
+                info = metadata.get(
+                    key,
+                    {
+                        "id": key.replace("market_", "").upper(),
+                        "name": key.replace("market_", "").replace("_", " ").title(),
+                        "timezone": None,
+                        "regular_session": None
+                    }
+                )
+
+                markets.append({
+                    **info,
+                    "opend_key": key,
+                    "state": str(value)
+                })
+
+            return sorted(
+                markets,
+                key=lambda x: x["id"]
+            )
+
+        finally:
+            ctx.close()
+
+
 opend = OpenDClient(
     host=config["moomoo"]["host"],
     port=config["moomoo"]["port"],

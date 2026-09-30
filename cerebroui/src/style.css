@@ -311,3 +311,326 @@ header p {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+
+/* ================================
+   Markets
+================================ */
+
+.marketToolbar {
+  margin-bottom: 16px;
+}
+
+.symbolSearch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding-left: 14px;
+  max-width: 620px;
+}
+
+.symbolSearch svg {
+  color: #94a3b8;
+}
+
+.symbolSearch input {
+  flex: 1;
+  border: 0;
+  outline: none;
+  font-size: 15px;
+  padding: 13px 0;
+  min-width: 0;
+}
+
+.symbolSearch button {
+  border: 0;
+  background: #111827;
+  color: white;
+  font-weight: 700;
+  padding: 13px 18px;
+  cursor: pointer;
+  border-radius: 0 11px 11px 0;
+}
+
+
+.marketQuotePanel {
+  background: white;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 16px;
+
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 30px;
+}
+
+.quoteIdentity {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.quoteIdentity h2 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.quoteIdentity span {
+  color: #7c8797;
+}
+
+.quotePrice {
+  font-size: 30px;
+  font-weight: 800;
+  margin-top: 7px;
+}
+
+.quotePrice span {
+  margin-left: 12px;
+  font-size: 14px;
+}
+
+.positive {
+  color: #16a34a;
+}
+
+.negative {
+  color: #dc2626;
+}
+
+.quoteStats {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.quoteStat span {
+  display: block;
+  color: #8490a2;
+  font-size: 11px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.quoteStat strong {
+  font-size: 14px;
+}
+
+
+.chartPanel {
+  position: relative;
+
+  background: white;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  padding: 16px;
+
+  margin-bottom: 16px;
+}
+
+.chartToolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+
+  padding-bottom: 13px;
+}
+
+.timeframeButtons,
+.chartControls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.chartToolbar button {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  padding: 7px 9px;
+  cursor: pointer;
+  color: #64748b;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chartToolbar button:hover {
+  background: #f1f5f9;
+}
+
+.chartToolbar button.selected {
+  background: #111827;
+  color: white;
+}
+
+.volumeToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  font-size: 13px;
+  color: #64748b;
+
+  margin-left: 7px;
+}
+
+.priceChart {
+  width: 100%;
+  height: 470px;
+}
+
+.chartLoading {
+  position: absolute;
+  top: 65px;
+  right: 25px;
+
+  background: rgba(255,255,255,.9);
+  padding: 6px 10px;
+  border-radius: 7px;
+
+  color: #64748b;
+  font-size: 12px;
+}
+
+.chartError {
+  height: 350px;
+  display: grid;
+  place-items: center;
+
+  color: #dc2626;
+}
+
+
+.marketSessionsPanel {
+  background: white;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.sectionHeading {
+  margin-bottom: 16px;
+}
+
+.sectionHeading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.sectionHeading p {
+  margin: 5px 0 0;
+  color: #8190a5;
+  font-size: 13px;
+}
+
+.sessionGrid {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fit, minmax(210px, 1fr));
+
+  gap: 11px;
+}
+
+.sessionCard {
+  border: 1px solid #e5eaf0;
+  background: #fafbfc;
+
+  border-radius: 11px;
+  padding: 14px;
+}
+
+.sessionTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sessionTop strong,
+.sessionTop span {
+  display: block;
+}
+
+.sessionTop span {
+  color: #94a3b8;
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.marketState {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.marketState.open {
+  color: #15803d;
+}
+
+.marketState.open .dot {
+  background: #22c55e;
+}
+
+.marketState.closed {
+  color: #64748b;
+}
+
+.marketState.closed .dot {
+  background: #94a3b8;
+}
+
+.sessionSchedule {
+  margin-top: 16px;
+}
+
+.sessionSchedule span,
+.sessionSchedule strong {
+  display: block;
+}
+
+.sessionSchedule span {
+  color: #94a3b8;
+  font-size: 10px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.sessionSchedule strong {
+  font-size: 12px;
+}
+
+.sessionTimezone {
+  color: #94a3b8;
+  font-size: 10px;
+  margin-top: 7px;
+}
+
+
+@media (max-width: 800px) {
+
+  .marketQuotePanel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .chartToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .priceChart {
+    height: 390px;
+  }
+
+}
