@@ -14,6 +14,7 @@ from app.services.market_metrics import (
 )
 from app.services.market_series import market_series
 from app.services.universe import universe_service
+from app.services.local_discovery import local_discovery
 from app.services.opend import opend
 
 
@@ -45,231 +46,93 @@ class QuantScreener:
     ):
         #
         # Stage 1:
-        # independent discovery models.
+        # refresh authoritative listed universe.
         #
-        pools = {
-            "momentum":
-                self._screen(
-                    StockField.CHANGE_RATE,
-                    SortDir.DESCEND,
-                    per_screen,
-                    min_price,
-                    min_market_cap
-                ),
-
-            "volume":
-                self._screen(
-                    StockField.VOLUME_RATIO,
-                    SortDir.DESCEND,
-                    per_screen,
-                    min_price,
-                    min_market_cap
-                ),
-
-            "turnover":
-                self._screen(
-                    StockField.TURNOVER_RATE,
-                    SortDir.DESCEND,
-                    per_screen,
-                    min_price,
-                    min_market_cap
-                ),
-
-            "near_52w_high":
-                self._screen(
-                    StockField.CUR_PRICE_TO_HIGHEST52_WEEKS_RATIO,
-                    SortDir.DESCEND,
-                    per_screen,
-                    min_price,
-                    min_market_cap
-                ),
-
-            "rsi_strength":
-                self._screen(
-                    StockField.RSI,
-                    SortDir.DESCEND,
-                    per_screen,
-                    min_price,
-                    min_market_cap
-                ),
-        }
-
-        #
-        # Stage 2:
-        # union + discovery consensus.
-        #
-        universe = {}
-
-        for source, items in (
-            pools.items()
-        ):
-            for rank, item in enumerate(
-                items,
-                start=1
-            ):
-                symbol = item[
-                    "symbol"
-                ]
-
-                record = universe.setdefault(
-                    symbol,
-                    {
-                        "symbol": symbol,
-                        "name":
-                            item.get(
-                                "name"
-                            ),
-
-                        "price":
-                            item.get(
-                                "price"
-                            ),
-
-                        "market_cap":
-                            item.get(
-                                "market_cap"
-                            ),
-
-                        "sources": [],
-                        "source_ranks": {},
-                    }
-                )
-
-                record[
-                    "sources"
-                ].append(
-                    source
-                )
-
-                record[
-                    "source_ranks"
-                ][source] = rank
-
-                if (
-                    record.get("name")
-                    is None
-                ):
-                    record[
-                        "name"
-                    ] = item.get(
-                        "name"
-                    )
-
-                if (
-                    record.get("price")
-                    is None
-                ):
-                    record[
-                        "price"
-                    ] = item.get(
-                        "price"
-                    )
-
-                if (
-                    record.get(
-                        "market_cap"
-                    )
-                    is None
-                ):
-                    record[
-                        "market_cap"
-                    ] = item.get(
-                        "market_cap"
-                    )
-
-        candidates = list(
-            universe.values()
-        )
-
-        #
-        # Refresh authoritative exchange-listed
-        # universe on every quant scan.
-        #
-        discovered_before_universe = len(
-            candidates
-        )
-
         self._progress(
             progress_callback,
             stage="UNIVERSE_REFRESH",
             processed=0,
             total=2,
             current_symbol=None,
-            message=(
-                "Refreshing Nasdaq Trader "
-                "symbol directories"
-            )
+            message="Refreshing Nasdaq Trader universe"
         )
 
-        listing_universe = (
-            universe_service.refresh()
-        )
+        listing_universe = universe_service.refresh()
 
-        eligible_symbols = set(
+        universe_symbols = list(
             listing_universe[
                 "eligible"
             ].keys()
         )
 
-        universe_rejected = []
-
-        eligible_candidates = []
-
-        for item in candidates:
-            symbol = item.get(
-                "symbol"
-            )
-
-            if symbol in eligible_symbols:
-                eligible_candidates.append(
-                    item
-                )
-            else:
-                universe_rejected.append(
-                    symbol
-                )
-
-        candidates = eligible_candidates
-
         self._progress(
             progress_callback,
-            stage="UNIVERSE_FILTER",
-            discovered=(
-                discovered_before_universe
-            ),
-            processed=len(
-                candidates
-            ),
-            total=(
-                discovered_before_universe
-            ),
+            stage="SNAPSHOT_UNIVERSE",
+            discovered=len(universe_symbols),
+            processed=0,
+            total=len(universe_symbols),
             current_symbol=None,
             message=(
-                f"Universe filter: "
-                f"{len(candidates)} eligible / "
-                f"{discovered_before_universe} "
-                f"discovered"
+                f"Snapshotting "
+                f"{len(universe_symbols)} "
+                f"eligible securities"
             )
         )
 
         #
-        # Cheap preliminary consensus score.
+        # Snapshot full eligible universe once.
         #
-        for item in candidates:
-            item[
-                "discovery_score"
-            ] = self._discovery_score(
-                item,
-                per_screen
-            )
-
-        candidates.sort(
-            key=lambda x:
-                x[
-                    "discovery_score"
-                ],
-            reverse=True
+        (
+            snapshot_map,
+            snapshot_failures
+        ) = self._batched_snapshots(
+            universe_symbols + ["US.SPY"]
         )
+
+        #
+        # Convert list-style snapshot result
+        # into symbol -> snapshot map if needed.
+        #
+        if isinstance(snapshot_map, list):
+            snapshot_map = {
+                row["symbol"]: row
+                for row in snapshot_map
+                if row.get("symbol")
+            }
+
+        #
+        # Stage 2:
+        # fully local snapshot discovery.
+        #
+        self._progress(
+            progress_callback,
+            stage="SNAPSHOT_DISCOVERY",
+            discovered=len(universe_symbols),
+            processed=len(snapshot_map),
+            total=len(universe_symbols),
+            snapshot_success=len(snapshot_map),
+            snapshot_failed=len(snapshot_failures),
+            current_symbol=None,
+            message="Ranking snapshot universe locally"
+        )
+
+        discovery = local_discovery.run(
+            snapshot_map,
+            per_screen=per_screen,
+            final_pool=200,
+            min_price=min_price,
+            min_market_cap=min_market_cap,
+        )
+
+        candidates = discovery[
+            "candidates"
+        ]
+
+        discovered_before_universe = discovery[
+            "discovered_unique"
+        ]
+
+        universe_rejected = []
 
         #
         # Stage 3:
@@ -277,33 +140,16 @@ class QuantScreener:
         # for strongest discovered names.
         #
         #
-        # Analyse the entire discovered universe.
+        # Deep-analyse the strongest candidates
+        # selected by local snapshot discovery.
         #
-        # We deliberately do NOT pre-trim securities
-        # based on the cheap discovery score. Every
-        # security discovered by any independent
-        # screen gets full historical factor analysis
-        # before final ranking.
+        # Snapshot discovery is intentionally cheap.
+        # Historical factor analysis remains the
+        # expensive second-stage ranking process.
         #
         deep_candidates = candidates
 
         analysed = []
-
-        #
-        # Batch current snapshots for
-        # every candidate in as few
-        # API requests as possible.
-        #
-        (
-            snapshot_map,
-            snapshot_failures
-        ) = self._batched_snapshots(
-            [
-                item["symbol"]
-                for item in deep_candidates
-            ]
-            + ["US.SPY"]
-        )
 
         #
         # Determine current US state once.
@@ -701,11 +547,19 @@ class QuantScreener:
                 "MULTI_FACTOR_ENSEMBLE_V1",
 
             "screens":
-                {
-                    name: len(items)
-                    for name, items
-                    in pools.items()
-                },
+                discovery[
+                    "screens"
+                ],
+
+            "snapshot_eligible":
+                discovery[
+                    "snapshot_eligible"
+                ],
+
+            "discovery_selected":
+                discovery[
+                    "selected"
+                ],
 
             "discovered_raw":
                 discovered_before_universe,

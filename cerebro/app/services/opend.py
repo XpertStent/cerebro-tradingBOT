@@ -73,15 +73,67 @@ class OpenDClient:
         return {
             "symbol": self._clean(row.get("code")),
             "name": self._clean(row.get("name")),
-            "price": self._clean(row.get("last_price")),
-            "open": self._clean(row.get("open_price")),
-            "high": self._clean(row.get("high_price")),
-            "low": self._clean(row.get("low_price")),
+
+            "price": self._clean(
+                row.get("last_price")
+            ),
+            "open": self._clean(
+                row.get("open_price")
+            ),
+            "high": self._clean(
+                row.get("high_price")
+            ),
+            "low": self._clean(
+                row.get("low_price")
+            ),
             "previous_close": self._clean(
                 row.get("prev_close_price")
             ),
-            "volume": self._clean(row.get("volume")),
-            "turnover": self._clean(row.get("turnover")),
+
+            "volume": self._clean(
+                row.get("volume")
+            ),
+            "turnover": self._clean(
+                row.get("turnover")
+            ),
+            "turnover_rate": self._clean(
+                row.get("turnover_rate")
+            ),
+            "volume_ratio": self._clean(
+                row.get("volume_ratio")
+            ),
+
+            "highest52weeks_price": self._clean(
+                row.get("highest52weeks_price")
+            ),
+            "lowest52weeks_price": self._clean(
+                row.get("lowest52weeks_price")
+            ),
+
+            "market_cap": self._clean(
+                row.get("total_market_val")
+            ),
+
+            "sec_status": self._clean(
+                row.get("sec_status")
+            ),
+            "equity_valid": self._clean(
+                row.get("equity_valid")
+            ),
+            "suspension": self._clean(
+                row.get("suspension")
+            ),
+
+            "pre_change_rate": self._clean(
+                row.get("pre_change_rate")
+            ),
+            "after_change_rate": self._clean(
+                row.get("after_change_rate")
+            ),
+            "overnight_change_rate": self._clean(
+                row.get("overnight_change_rate")
+            ),
+
             "updated_at": self._clean(
                 row.get("update_time")
             )
