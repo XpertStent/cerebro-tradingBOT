@@ -61,7 +61,7 @@ function App() {
 
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, 5000);
+    const timer = setInterval(refresh, 10000);
     return () => clearInterval(timer);
   }, []);
 

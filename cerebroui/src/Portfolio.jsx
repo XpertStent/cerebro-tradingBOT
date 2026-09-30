@@ -50,13 +50,15 @@ export default function Portfolio() {
     useState(null);
 
 
-  async function loadPortfolio() {
+  async function loadPortfolio(force = false) {
 
     try {
       setError(null);
 
       const r = await fetch(
-        "/api/portfolio/",
+        force
+          ? "/api/portfolio/?refresh=true"
+          : "/api/portfolio/",
         {
           cache: "no-store"
         }
@@ -91,7 +93,7 @@ export default function Portfolio() {
     const timer =
       setInterval(
         loadPortfolio,
-        5000
+        10000
       );
 
     return () =>
@@ -137,7 +139,7 @@ export default function Portfolio() {
 
           <button
             className="portfolioRefresh"
-            onClick={loadPortfolio}
+            onClick={() => loadPortfolio(true)}
           >
             <RefreshCw size={16}/>
             Refresh

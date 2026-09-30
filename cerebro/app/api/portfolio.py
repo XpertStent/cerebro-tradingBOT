@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.services.trading import trading
 
@@ -24,11 +24,21 @@ def accounts():
 
 
 @router.get("/")
-def portfolio():
+def portfolio(
+    refresh: bool = Query(
+        False,
+        description="Bypass Cerebro cache"
+    )
+):
     try:
         return {
-            "account": trading.get_account_summary(),
-            "positions": trading.get_positions()
+            "account": trading.get_account_summary(
+                refresh=refresh
+            ),
+
+            "positions": trading.get_positions(
+                refresh=refresh
+            )
         }
 
     except Exception as e:
@@ -39,13 +49,17 @@ def portfolio():
 
 
 @router.get("/positions")
-def positions():
+def positions(
+    refresh: bool = Query(False)
+):
     try:
-        positions = trading.get_positions()
+        data = trading.get_positions(
+            refresh=refresh
+        )
 
         return {
-            "count": len(positions),
-            "positions": positions
+            "count": len(data),
+            "positions": data
         }
 
     except Exception as e:

@@ -1,3 +1,4 @@
+import time
 from moomoo import (
     OpenSecTradeContext,
     RET_OK,
@@ -14,6 +15,34 @@ class TradingClient:
     def __init__(self, host: str, port: int):
         self.host = host
         self.port = port
+
+        self._cache = {}
+        self._cache_ttl = 5.0
+
+    def _cache_get(self, key):
+        item = self._cache.get(key)
+
+        if not item:
+            return None
+
+        timestamp, value = item
+
+        if time.monotonic() - timestamp > self._cache_ttl:
+            self._cache.pop(key, None)
+            return None
+
+        return value
+
+    def _cache_set(self, key, value):
+        self._cache[key] = (
+            time.monotonic(),
+            value
+        )
+
+        return value
+
+    def clear_cache(self):
+        self._cache.clear()
 
     def _context(self):
         return OpenSecTradeContext(
@@ -72,7 +101,13 @@ class TradingClient:
 
         raise RuntimeError("No paper trading account found")
 
-    def get_account_summary(self):
+    def get_account_summary(self, refresh=False):
+        if not refresh:
+            cached = self._cache_get("account_summary")
+
+            if cached is not None:
+                return cached
+
         account_id = self._paper_account_id()
         ctx = self._context()
 
@@ -101,7 +136,7 @@ class TradingClient:
                 "realized_pl"
             ]
 
-            return {
+            result = {
                 "account_id": account_id,
                 "mode": "PAPER",
                 "total_value": self._clean(row.get("total_assets")),
@@ -112,10 +147,21 @@ class TradingClient:
                 "realized_pnl": self._clean(row.get("realized_pl"))
             }
 
+            return self._cache_set(
+                "account_summary",
+                result
+            )
+
         finally:
             ctx.close()
 
-    def get_positions(self):
+    def get_positions(self, refresh=False):
+        if not refresh:
+            cached = self._cache_get("positions")
+
+            if cached is not None:
+                return cached
+
         account_id = self._paper_account_id()
         ctx = self._context()
 
@@ -144,7 +190,10 @@ class TradingClient:
                     "profit_loss_percent": self._clean(row.get("pl_ratio"))
                 })
 
-            return positions
+            return self._cache_set(
+                "positions",
+                positions
+            )
 
         finally:
             ctx.close()

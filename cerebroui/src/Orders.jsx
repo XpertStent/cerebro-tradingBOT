@@ -166,7 +166,7 @@ export default function Orders() {
   useEffect(() => {
     loadOrders();
 
-    const timer = setInterval(loadOrders, 5000);
+    const timer = setInterval(loadOrders, 10000);
 
     return () => clearInterval(timer);
   }, []);
