@@ -39,7 +39,8 @@ class QuantScreener:
         per_screen=40,
         deep_limit=60,
         min_price=5,
-        min_market_cap=1_000_000_000
+        min_market_cap=1_000_000_000,
+        progress_callback=None,
     ):
         #
         # Stage 1:
@@ -252,7 +253,53 @@ class QuantScreener:
                 )
                 break
 
-        for item in deep_candidates:
+        cache_hits = 0
+        history_fetched = 0
+        analysis_failures = 0
+
+        self._progress(
+            progress_callback,
+            stage="HISTORICAL_ANALYSIS",
+            discovered=len(candidates),
+            processed=0,
+            total=len(deep_candidates),
+            snapshot_success=len(
+                snapshot_map
+            ),
+            snapshot_failed=len(
+                snapshot_failures
+            ),
+            cache_hits=0,
+            history_fetched=0,
+            analysis_success=0,
+            analysis_failures=0,
+            current_symbol=None,
+            message="Starting historical analysis"
+        )
+
+        for index, item in enumerate(
+            deep_candidates,
+            start=1
+        ):
+            symbol = item["symbol"]
+
+            self._progress(
+                progress_callback,
+                stage="HISTORICAL_ANALYSIS",
+                current_symbol=symbol,
+                processed=index - 1,
+                total=len(deep_candidates),
+                cache_hits=cache_hits,
+                history_fetched=history_fetched,
+                analysis_success=len(
+                    analysed
+                ),
+                analysis_failures=analysis_failures,
+                message=(
+                    f"Analysing {symbol}"
+                )
+            )
+
             try:
                 series = (
                     market_series.build(
@@ -265,6 +312,23 @@ class QuantScreener:
                     )
                 )
 
+                sync_info = (
+                    series.get(
+                        "history_sync",
+                        {}
+                    )
+                )
+
+                if (
+                    sync_info.get(
+                        "source"
+                    )
+                    == "CACHE"
+                ):
+                    cache_hits += 1
+                else:
+                    history_fetched += 1
+
                 metrics = (
                     market_metrics.build(
                         item["symbol"],
@@ -275,6 +339,7 @@ class QuantScreener:
                 )
 
             except Exception as exc:
+                analysis_failures += 1
                 metrics = {
                     "symbol":
                         item["symbol"],
@@ -289,6 +354,25 @@ class QuantScreener:
             if not metrics.get(
                 "available"
             ):
+                self._progress(
+                    progress_callback,
+                    stage="HISTORICAL_ANALYSIS",
+                    current_symbol=symbol,
+                    processed=index,
+                    total=len(
+                        deep_candidates
+                    ),
+                    cache_hits=cache_hits,
+                    history_fetched=history_fetched,
+                    analysis_success=len(
+                        analysed
+                    ),
+                    analysis_failures=analysis_failures,
+                    message=(
+                        f"Skipped {symbol}"
+                    )
+                )
+
                 continue
 
             analysed.append({
@@ -296,6 +380,26 @@ class QuantScreener:
                 "metrics":
                     metrics
             })
+
+            self._progress(
+                progress_callback,
+                stage="HISTORICAL_ANALYSIS",
+                current_symbol=symbol,
+                processed=index,
+                total=len(
+                    deep_candidates
+                ),
+                cache_hits=cache_hits,
+                history_fetched=history_fetched,
+                analysis_success=len(
+                    analysed
+                ),
+                analysis_failures=analysis_failures,
+                message=(
+                    f"Analysed {index} / "
+                    f"{len(deep_candidates)}"
+                )
+            )
 
         #
         # Benchmark uses the same
@@ -575,6 +679,26 @@ class QuantScreener:
             "candidates":
                 final,
         }
+
+    def _progress(
+        self,
+        callback,
+        **values
+    ):
+        if callback is None:
+            return
+
+        try:
+            callback(
+                **values
+            )
+        except Exception:
+            #
+            # Progress reporting must never
+            # break a quant run.
+            #
+            pass
+
 
     def _batched_snapshots(
         self,
