@@ -7,7 +7,6 @@ services:
     tty: true
 
     ports:
-      - "11111:11111"
       - "7000:7000"
 
     expose:
