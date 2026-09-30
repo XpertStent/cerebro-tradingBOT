@@ -229,7 +229,8 @@ class OpenDClient:
         timeframe: str = "1d",
         count: int = 100,
         start: str = None,
-        end: str = None
+        end: str = None,
+        adjustment: str = "none"
     ):
 
         symbol = self.normalize_symbol(symbol)
@@ -245,10 +246,28 @@ class OpenDClient:
 
         try:
 
+            adjustment_map = {
+                "none": AuType.NONE,
+                "qfq": AuType.QFQ,
+            }
+
+            adjustment_key = str(
+                adjustment or "none"
+            ).lower()
+
+            if adjustment_key not in adjustment_map:
+                raise ValueError(
+                    f"Unsupported adjustment "
+                    f"'{adjustment}'. "
+                    f"Supported: none, qfq"
+                )
+
             kwargs = {
                 "code": symbol,
                 "ktype": self.TIMEFRAMES[timeframe],
-                "autype": AuType.NONE,
+                "autype": adjustment_map[
+                    adjustment_key
+                ],
                 "max_count": 1000,
             }
 

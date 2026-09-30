@@ -9,6 +9,8 @@ from app.services.opend import opend
 
 class MarketHistoryStore:
 
+    CACHE_VERSION = "QFQ_V2"
+
     def __init__(
         self,
         path="/data/market_history.db"
@@ -69,6 +71,7 @@ class MarketHistoryStore:
                     low REAL,
                     close REAL NOT NULL,
                     volume INTEGER,
+                    turnover REAL,
 
                     PRIMARY KEY (
                         security_id,
@@ -94,6 +97,71 @@ class MarketHistoryStore:
                     REFERENCES securities(id)
                 )
             """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS history_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
+
+            columns = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(daily_candles)"
+                ).fetchall()
+            }
+
+            if "turnover" not in columns:
+                conn.execute(
+                    "ALTER TABLE daily_candles "
+                    "ADD COLUMN turnover REAL"
+                )
+
+            version_row = conn.execute(
+                """
+                SELECT value
+                FROM history_metadata
+                WHERE key = 'cache_version'
+                """
+            ).fetchone()
+
+            current_version = (
+                version_row["value"]
+                if version_row
+                else None
+            )
+
+            if current_version != self.CACHE_VERSION:
+                #
+                # Existing candles were RAW V1.
+                # Never mix them with QFQ history.
+                #
+                conn.execute(
+                    "DELETE FROM daily_candles"
+                )
+                conn.execute(
+                    "DELETE FROM history_sync"
+                )
+
+                conn.execute(
+                    """
+                    INSERT INTO history_metadata (
+                        key,
+                        value
+                    )
+                    VALUES (
+                        'cache_version',
+                        ?
+                    )
+                    ON CONFLICT(key)
+                    DO UPDATE SET
+                        value = excluded.value
+                    """,
+                    (
+                        self.CACHE_VERSION,
+                    )
+                )
 
     def _security_id(
         self,
@@ -146,7 +214,8 @@ class MarketHistoryStore:
                     high,
                     low,
                     close,
-                    volume
+                    volume,
+                    turnover
 
                 FROM daily_candles
 
@@ -336,7 +405,8 @@ class MarketHistoryStore:
                     ),
                     end=today.strftime(
                         "%Y-%m-%d"
-                    )
+                    ),
+                    adjustment="qfq"
                 )
 
             except RuntimeError as exc:
@@ -378,7 +448,8 @@ class MarketHistoryStore:
                     ),
                     end=today.strftime(
                         "%Y-%m-%d"
-                    )
+                    ),
+                    adjustment="qfq"
                 )
 
             finally:
@@ -515,6 +586,12 @@ class MarketHistoryStore:
                             "volume"
                         )
                     ),
+
+                    self._num(
+                        row.get(
+                            "turnover"
+                        )
+                    ),
                 )
             )
 
@@ -532,11 +609,12 @@ class MarketHistoryStore:
                     high,
                     low,
                     close,
-                    volume
+                    volume,
+                    turnover
                 )
 
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?
                 )
 
                 ON CONFLICT(
@@ -549,7 +627,8 @@ class MarketHistoryStore:
                     high = excluded.high,
                     low = excluded.low,
                     close = excluded.close,
-                    volume = excluded.volume
+                    volume = excluded.volume,
+                    turnover = excluded.turnover
                 """,
                 records
             )

@@ -53,18 +53,75 @@ class MarketMetrics:
                 row.get("volume")
             )
 
+            turnover = self._f(
+                row.get("turnover")
+            )
+
+            open_price = self._f(
+                row.get("open")
+                or row.get("open_price")
+            )
+
             if close is not None:
                 rows.append({
+                    "open": open_price,
                     "close": close,
                     "high": high,
                     "low": low,
-                    "volume": volume
+                    "volume": volume,
+                    "turnover": turnover,
                 })
 
-        if len(rows) < 20:
+        if len(rows) < 60:
             return {
                 "symbol": symbol,
-                "available": False
+                "available": False,
+                "skip_reason": "INSUFFICIENT_HISTORY",
+                "bars": len(rows),
+            }
+
+        recent_quality = rows[-60:]
+
+        invalid_ohlc = 0
+
+        for r in recent_quality:
+            o = r.get("open")
+            h = r.get("high")
+            l = r.get("low")
+            c = r.get("close")
+
+            if (
+                c is None
+                or c <= 0
+                or h is None
+                or l is None
+                or h <= 0
+                or l <= 0
+                or h < l
+            ):
+                invalid_ohlc += 1
+                continue
+
+            if (
+                o is not None
+                and (
+                    o <= 0
+                    or o > h
+                    or o < l
+                )
+            ):
+                invalid_ohlc += 1
+                continue
+
+            if c > h or c < l:
+                invalid_ohlc += 1
+
+        if invalid_ohlc > 2:
+            return {
+                "symbol": symbol,
+                "available": False,
+                "skip_reason": "INVALID_OHLC",
+                "invalid_ohlc_bars": invalid_ohlc,
             }
 
         closes = [
@@ -86,6 +143,113 @@ class MarketMetrics:
             r["volume"]
             for r in rows
         ]
+
+        turnovers = [
+            r.get("turnover")
+            for r in rows
+        ]
+
+        #
+        # Historical liquidity.
+        #
+        recent_turnovers = [
+            value
+            for value in turnovers[-60:]
+            if value is not None
+            and value > 0
+        ]
+
+        if recent_turnovers:
+            ordered = sorted(
+                recent_turnovers
+            )
+
+            middle = len(ordered) // 2
+
+            if len(ordered) % 2:
+                median_turnover_60d = (
+                    ordered[middle]
+                )
+            else:
+                median_turnover_60d = (
+                    ordered[middle - 1]
+                    + ordered[middle]
+                ) / 2
+        else:
+            #
+            # Fallback for legacy/missing turnover.
+            #
+            dollar_volume = [
+                r["close"] * r["volume"]
+                for r in rows[-60:]
+                if (
+                    r.get("close")
+                    and r.get("volume")
+                )
+            ]
+
+            if dollar_volume:
+                ordered = sorted(
+                    dollar_volume
+                )
+                middle = len(ordered) // 2
+
+                if len(ordered) % 2:
+                    median_turnover_60d = (
+                        ordered[middle]
+                    )
+                else:
+                    median_turnover_60d = (
+                        ordered[middle - 1]
+                        + ordered[middle]
+                    ) / 2
+            else:
+                median_turnover_60d = None
+
+        #
+        # Stale-price detection.
+        #
+        recent_closes = closes[-21:]
+
+        unchanged = sum(
+            1
+            for a, b in zip(
+                recent_closes,
+                recent_closes[1:]
+            )
+            if a == b
+        )
+
+        if unchanged >= 8:
+            return {
+                "symbol": symbol,
+                "available": False,
+                "skip_reason": "STALE_PRICE_SERIES",
+                "unchanged_sessions_20d": unchanged,
+            }
+
+        #
+        # Discontinuity diagnostic.
+        # QFQ should remove split artifacts.
+        #
+        daily_moves = []
+
+        for a, b in zip(
+            closes,
+            closes[1:]
+        ):
+            if a and a > 0:
+                daily_moves.append(
+                    abs(
+                        (b / a - 1) * 100
+                    )
+                )
+
+        max_abs_daily_return_pct = (
+            max(daily_moves)
+            if daily_moves
+            else None
+        )
 
         price = closes[-1]
 
@@ -110,6 +274,34 @@ class MarketMetrics:
 
             "price":
                 round(price, 4),
+
+            "bars":
+                len(rows),
+
+            "median_turnover_60d":
+                (
+                    round(
+                        median_turnover_60d,
+                        2
+                    )
+                    if median_turnover_60d
+                    is not None
+                    else None
+                ),
+
+            "max_abs_daily_return_pct":
+                (
+                    round(
+                        max_abs_daily_return_pct,
+                        3
+                    )
+                    if max_abs_daily_return_pct
+                    is not None
+                    else None
+                ),
+
+            "unchanged_sessions_20d":
+                unchanged,
 
             #
             # Momentum

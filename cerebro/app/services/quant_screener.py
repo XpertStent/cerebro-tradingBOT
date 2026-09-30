@@ -42,6 +42,8 @@ class QuantScreener:
         deep_limit=60,
         min_price=5,
         min_market_cap=1_000_000_000,
+        min_current_turnover=5_000_000,
+        min_median_turnover=5_000_000,
         progress_callback=None,
     ):
         #
@@ -174,6 +176,8 @@ class QuantScreener:
         cache_hits = 0
         history_fetched = 0
         analysis_failures = 0
+        analysis_skipped = 0
+        analysis_skip_reasons = {}
 
         self._progress(
             progress_callback,
@@ -217,6 +221,62 @@ class QuantScreener:
                     f"Analysing {symbol}"
                 )
             )
+
+            snapshot = snapshot_map.get(
+                item["symbol"],
+                {}
+            )
+
+            current_turnover = snapshot.get(
+                "turnover"
+            )
+
+            try:
+                current_turnover = float(
+                    current_turnover
+                )
+            except Exception:
+                current_turnover = None
+
+            if (
+                current_turnover is None
+                or current_turnover
+                < min_current_turnover
+            ):
+                analysis_skipped += 1
+
+                reason = "LOW_CURRENT_LIQUIDITY"
+
+                analysis_skip_reasons[
+                    reason
+                ] = (
+                    analysis_skip_reasons.get(
+                        reason,
+                        0
+                    )
+                    + 1
+                )
+
+                self._progress(
+                    progress_callback,
+                    stage="HISTORICAL_ANALYSIS",
+                    current_symbol=symbol,
+                    processed=index,
+                    total=len(deep_candidates),
+                    cache_hits=cache_hits,
+                    history_fetched=history_fetched,
+                    analysis_success=len(
+                        analysed
+                    ),
+                    analysis_skipped=analysis_skipped,
+                    analysis_failures=analysis_failures,
+                    message=(
+                        f"Skipped {symbol}: "
+                        f"{reason}"
+                    )
+                )
+
+                continue
 
             try:
                 series = (
@@ -269,9 +329,46 @@ class QuantScreener:
                         str(exc),
                 }
 
+            if metrics.get(
+                "available"
+            ):
+                median_turnover = metrics.get(
+                    "median_turnover_60d"
+                )
+
+                if (
+                    median_turnover is None
+                    or median_turnover
+                    < min_median_turnover
+                ):
+                    metrics = {
+                        **metrics,
+                        "available": False,
+                        "skip_reason":
+                            "LOW_HISTORICAL_LIQUIDITY",
+                    }
+
             if not metrics.get(
                 "available"
             ):
+                if not metrics.get("error"):
+                    analysis_skipped += 1
+
+                    reason = metrics.get(
+                        "skip_reason",
+                        "UNAVAILABLE_METRICS"
+                    )
+
+                    analysis_skip_reasons[
+                        reason
+                    ] = (
+                        analysis_skip_reasons.get(
+                            reason,
+                            0
+                        )
+                        + 1
+                    )
+
                 self._progress(
                     progress_callback,
                     stage="HISTORICAL_ANALYSIS",
@@ -598,6 +695,22 @@ class QuantScreener:
 
             "deep_analysed":
                 len(analysed),
+
+            "analysis_skipped":
+                analysis_skipped,
+
+            "analysis_failures":
+                analysis_failures,
+
+            "analysis_skip_reasons":
+                analysis_skip_reasons,
+
+            "liquidity_thresholds": {
+                "current_turnover":
+                    min_current_turnover,
+                "median_turnover_60d":
+                    min_median_turnover,
+            },
 
             "returned":
                 len(final),

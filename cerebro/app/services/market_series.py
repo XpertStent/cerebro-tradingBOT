@@ -187,6 +187,13 @@ class MarketSeries:
                     )
                 ),
 
+            "turnover":
+                self._num(
+                    snapshot.get(
+                        "turnover"
+                    )
+                ),
+
             "provisional":
                 True,
         }
