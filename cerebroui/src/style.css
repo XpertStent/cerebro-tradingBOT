@@ -1,0 +1,313 @@
+:root {
+  font-family: Inter, Arial, sans-serif;
+  color: #172033;
+  background: #f4f6fa;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+}
+
+.app {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 235px 1fr;
+}
+
+.sidebar {
+  background: #111827;
+  color: #fff;
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 8px 25px;
+}
+
+.brand strong {
+  display: block;
+  font-size: 20px;
+}
+
+.brand span {
+  display: block;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+nav button {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #aeb8c8;
+  cursor: pointer;
+  text-align: left;
+}
+
+nav button:hover,
+nav button.active {
+  color: white;
+  background: #1f2937;
+}
+
+.sidebarStatus {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px;
+  border-top: 1px solid #273244;
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+main {
+  padding: 28px 32px;
+  min-width: 0;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+header p {
+  margin: 5px 0 0;
+  color: #768196;
+  font-size: 14px;
+}
+
+.statusPill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  background: white;
+  border: 1px solid #e2e7ef;
+}
+
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.green {
+  background: #22c55e;
+}
+
+.amber {
+  background: #f59e0b;
+}
+
+.red {
+  background: #ef4444;
+}
+
+.statusPill.ready .dot {
+  background: #22c55e;
+}
+
+.statusPill.bad .dot {
+  background: #ef4444;
+}
+
+.statusGrid,
+.metricGrid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: 16px;
+}
+
+.statusCard,
+.metric,
+.panel,
+.placeholder {
+  background: white;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+}
+
+.statusCard {
+  padding: 16px;
+}
+
+.cardLabel {
+  color: #7b8798;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: 10px;
+}
+
+.statusValue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.metric {
+  padding: 18px;
+}
+
+.metric span {
+  display: block;
+  color: #778296;
+  font-size: 13px;
+  margin-bottom: 7px;
+}
+
+.metric strong {
+  font-size: 23px;
+}
+
+.lowerGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.panel {
+  padding: 18px;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.panelHeader h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.panelHeader span {
+  background: #eef2ff;
+  color: #4f46e5;
+  border-radius: 99px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  padding: 11px 0;
+  border-bottom: 1px solid #eef1f5;
+  font-size: 14px;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row span {
+  color: #748094;
+}
+
+.order {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  background: #f8fafc;
+  border-radius: 10px;
+}
+
+.order strong,
+.order span {
+  display: block;
+}
+
+.order span {
+  color: #748094;
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.orderStatus {
+  font-size: 12px;
+  font-weight: 700;
+  background: #fff7ed;
+  color: #c2410c;
+  padding: 6px 9px;
+  border-radius: 999px;
+}
+
+.empty {
+  color: #8a94a4;
+  padding: 20px 0;
+}
+
+.placeholder {
+  min-height: 300px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+
+.placeholder h2 {
+  margin-bottom: 4px;
+}
+
+.placeholder p {
+  color: #7c8797;
+}
+
+@media (max-width: 900px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .statusGrid,
+  .metricGrid,
+  .lowerGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

@@ -40,5 +40,17 @@ services:
     depends_on:
       - opend
 
+
+  cerebroui:
+    build: ./cerebroui
+    container_name: cerebroui
+    restart: unless-stopped
+
+    ports:
+      - "7100:7100"
+
+    depends_on:
+      - cerebro
+
 volumes:
   opend-state:
