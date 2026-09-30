@@ -377,6 +377,17 @@ class MarketMetrics:
             discontinuity_count > 0
         )
 
+        if discontinuity_count >= 2:
+            discontinuity_class = (
+                "MULTIPLE_EXTREME_EVENTS"
+            )
+        elif discontinuity_count == 1:
+            discontinuity_class = (
+                "EXTREME_EVENT"
+            )
+        else:
+            discontinuity_class = "NONE"
+
         price = closes[-1]
 
         ema20 = self._ema(
@@ -450,6 +461,9 @@ class MarketMetrics:
 
             "discontinuity_flag":
                 discontinuity_flag,
+
+            "discontinuity_class":
+                discontinuity_class,
 
             "discontinuity_count":
                 discontinuity_count,
