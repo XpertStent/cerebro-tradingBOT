@@ -293,3 +293,23 @@ def symbol_context(
         decision_limit=decision_limit,
         rejection_limit=rejection_limit
     )
+
+
+from app.services.ai_run_context import (
+    ai_run_context
+)
+
+
+@router.get("/run-context")
+def run_context(
+    run_type: str = "MANUAL",
+    max_candidates: int = Query(
+        30,
+        ge=1,
+        le=50
+    )
+):
+    return ai_run_context.build(
+        run_type=run_type,
+        max_candidates=max_candidates
+    )
