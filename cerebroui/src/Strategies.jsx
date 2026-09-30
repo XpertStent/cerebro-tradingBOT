@@ -7,10 +7,15 @@ import {
   RefreshCw,
   ShieldCheck,
   Trash2,
-  XCircle
+  XCircle,
+  Activity,
+  DatabaseZap,
+  Eraser,
+  SearchCheck
 } from "lucide-react";
 
 import "./AIEngine.css";
+import CollapsibleSection from "./CollapsibleSection";
 
 
 function fmtScore(value) {
@@ -22,6 +27,22 @@ function unwrapLatest(payload) {
   const stored = payload?.result;
   if (!stored) return null;
   return stored.result || stored;
+}
+
+function fmtElapsed(value) {
+  const seconds = Number(value || 0);
+  if (seconds < 60) return `${seconds.toFixed(0)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}m ${secs}s`;
+}
+
+function openMarket(symbol, name = "") {
+  window.dispatchEvent(
+    new CustomEvent("cerebro-open-market", {
+      detail: { symbol, name }
+    })
+  );
 }
 
 export default function Strategies() {
@@ -39,6 +60,8 @@ export default function Strategies() {
   const pendingCount = proposals.filter(item => item.status === "PENDING_APPROVAL").length;
   const autoExecuted = approvalMode === "AUTO";
   const running = progress?.status === "RUNNING" || progress?.status === "QUEUED";
+  const researchSymbols = progress?.ai?.research_symbols || {};
+  const events = progress?.events || [];
 
   const proposalBySymbol = useMemo(() => {
     const map = new Map();
@@ -162,6 +185,37 @@ export default function Strategies() {
     }
   }
 
+  async function clearAllHistory() {
+    const ok = window.confirm(
+      "TEST RESET ONLY: delete ALL stored AI decision history, theses, outcomes and run history? Broker orders, settings, quant history and market data are not deleted."
+    );
+    if (!ok) return;
+
+    const second = window.confirm(
+      "This cannot be undone. Clear all AI decision memory now?"
+    );
+    if (!second) return;
+
+    setBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/ai/decision/history", { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Delete failed (${response.status})`);
+      setBundle(null);
+      setRunId(null);
+      setProgress(null);
+      setMessage({
+        kind: "ok",
+        text: "All AI decision history and theses cleared for testing."
+      });
+    } catch (error) {
+      setMessage({ kind: "error", text: error.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
     loadLatest();
   }, []);
@@ -189,9 +243,9 @@ export default function Strategies() {
           setMessage({ kind: "error", text: data.error || "AI workflow failed." });
           return;
         }
-        timer = setTimeout(poll, 1200);
+        timer = setTimeout(poll, 800);
       } catch (_) {
-        if (!cancelled) timer = setTimeout(poll, 1800);
+        if (!cancelled) timer = setTimeout(poll, 1400);
       }
     }
 
@@ -215,7 +269,7 @@ export default function Strategies() {
       <section className="aiHero">
         <div>
           <h2>AI Decision Engine</h2>
-          <p>Run the complete quant → research → AI → deterministic risk → approval workflow.</p>
+          <p>Quant → research → decision model → deterministic risk → approval.</p>
         </div>
         <div className="aiHeroActions">
           <button className="aiPrimary" onClick={startManualRun} disabled={busy || running}>
@@ -234,65 +288,120 @@ export default function Strategies() {
             <Trash2 size={14}/>
             Clear AI Result
           </button>
+          <button className="aiDanger strongDanger" onClick={clearAllHistory} disabled={busy || running}>
+            <Eraser size={14}/>
+            Clear All AI History
+          </button>
         </div>
       </section>
 
       {message && <div className={`aiMessage ${message.kind === "error" ? "error" : ""}`}>{message.text}</div>}
 
-      <section className="aiPanel">
-        <div className="aiPanelHeader">
-          <div>
-            <h3>Workflow Progress</h3>
-            <p>{progress?.message || "Ready for a manual decision run."}</p>
-          </div>
+      <CollapsibleSection
+        title="Workflow Progress"
+        subtitle={progress?.message || "Ready for a manual decision run."}
+        actions={
           <span className={`aiStatusBadge ${statusClass}`}>
             {progress?.status === "RUNNING" ? <Clock3 size={13}/> : progress?.status === "COMPLETE" ? <CheckCircle2 size={13}/> : progress?.status === "FAILED" ? <XCircle size={13}/> : <BrainCircuit size={13}/>} 
             {progress?.stage || "IDLE"}
           </span>
-        </div>
-
+        }
+      >
         <div className="aiProgressTrack">
           <div className="aiProgressFill" style={{ width: `${Number(progress?.percent || 0)}%` }}/>
         </div>
 
         <div className="aiProgressMeta">
           <div className="aiMetric"><span>Overall</span><strong>{Number(progress?.percent || 0).toFixed(1)}%</strong></div>
+          <div className="aiMetric"><span>Elapsed</span><strong>{fmtElapsed(progress?.elapsed_seconds)}</strong></div>
           <div className="aiMetric"><span>Quant Stage</span><strong>{progress?.quant?.stage || "—"}</strong></div>
           <div className="aiMetric"><span>Quant Progress</span><strong>{Number(progress?.quant?.percent || 0).toFixed(1)}%</strong></div>
-          <div className="aiMetric"><span>Current Symbol</span><strong>{progress?.quant?.current_symbol || "—"}</strong></div>
           <div className="aiMetric"><span>AI Stage</span><strong>{progress?.ai?.stage || "—"}</strong></div>
           <div className="aiMetric"><span>AI Candidates</span><strong>{progress?.ai?.candidate_count ?? "—"}</strong></div>
-          <div className="aiMetric"><span>Research Ready</span><strong>{progress?.ai ? `${progress.ai.research_ready || 0}/${progress.ai.research_request_count || 0}` : "—"}</strong></div>
+          <div className="aiMetric"><span>Research</span><strong>{progress?.ai ? `${progress.ai.research_complete || 0}/${progress.ai.research_request_count || 0}` : "—"}</strong></div>
+          <div className="aiMetric"><span>In Flight</span><strong>{progress?.ai?.research_in_flight ?? "—"}</strong></div>
+          <div className="aiMetric"><span>Research Ready</span><strong>{progress?.ai?.research_ready ?? "—"}</strong></div>
           <div className="aiMetric"><span>Research Errors</span><strong>{progress?.ai?.research_errors ?? "—"}</strong></div>
+          <div className="aiMetric"><span>Latest Research</span><strong>{progress?.ai?.research_current_symbol || "—"}</strong></div>
+          <div className="aiMetric"><span>Model Active</span><strong>{progress?.ai?.stage === "DECISION_MODEL" ? `Yes · ${fmtElapsed(progress?.ai?.model_elapsed_seconds)}` : "No"}</strong></div>
         </div>
-      </section>
+
+        {progress?.ai?.stage === "DECISION_MODEL" && (
+          <div className="aiThinkingBanner">
+            <BrainCircuit size={18}/>
+            <div>
+              <strong>Decision model request is active</strong>
+              <span>Cerebro can show request/stage timing and completed structured output, but not the model&apos;s private chain-of-thought.</span>
+            </div>
+          </div>
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Live Workflow Activity"
+        subtitle="Operational events from quant, research, model and risk stages."
+        defaultOpen={running}
+        bodyClassName="scrollRegion compact"
+      >
+        {events.length === 0 ? (
+          <div className="aiEmpty">No live workflow events yet.</div>
+        ) : (
+          <div className="aiEventList">
+            {events.slice().reverse().map((event, index) => (
+              <div className={`aiEvent ${event.kind === "ERROR" ? "error" : event.kind === "SUCCESS" ? "success" : ""}`} key={`${event.at}-${index}`}>
+                <Activity size={14}/>
+                <div>
+                  <strong>{event.stage}</strong>
+                  <span>{event.message}</span>
+                </div>
+                <time>{new Date(event.at).toLocaleTimeString()}</time>
+              </div>
+            ))}
+          </div>
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Live Research Status"
+        subtitle="Each completed symbol appears here as the parallel research workers finish."
+        defaultOpen={running && progress?.stage === "RESEARCH_AND_CONTEXT"}
+        bodyClassName="scrollRegion compact"
+      >
+        {Object.keys(researchSymbols).length === 0 ? (
+          <div className="aiEmpty">Research has not returned any symbol results yet.</div>
+        ) : (
+          <div className="researchSymbolGrid">
+            {Object.entries(researchSymbols).map(([symbol, status]) => (
+              <button key={symbol} className="researchSymbol" onClick={() => openMarket(symbol)}>
+                <SearchCheck size={14}/>
+                <strong>{symbol}</strong>
+                <span className={status === "ERROR" ? "bad" : "good"}>{status}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </CollapsibleSection>
 
       {bundle?.ai?.decision && (
-        <section className="aiPanel">
-          <div className="aiPanelHeader">
-            <div>
-              <h3>Decision Summary</h3>
-              <p>Generated by {bundle.ai.model} with {bundle.ai.reasoning_effort} reasoning.</p>
-            </div>
-            <span className="aiStatusBadge complete"><ShieldCheck size={13}/> {approvalMode || "READY"}</span>
-          </div>
-
+        <CollapsibleSection
+          title="Decision Summary"
+          subtitle={`Generated by ${bundle.ai.model} with ${bundle.ai.reasoning_effort} reasoning.`}
+          actions={<span className="aiStatusBadge complete"><ShieldCheck size={13}/> {approvalMode || "READY"}</span>}
+        >
           <div className="aiSummaryGrid">
             <div className="aiSummaryCard"><span>Portfolio</span><strong>{bundle.ai.decision.portfolio_summary || "—"}</strong></div>
             <div className="aiSummaryCard"><span>Market</span><strong>{bundle.ai.decision.market_summary || "—"}</strong></div>
             <div className="aiSummaryCard"><span>Decisions</span><strong>{decisions.length}</strong></div>
           </div>
-        </section>
+        </CollapsibleSection>
       )}
 
-      <section className="aiPanel">
-        <div className="aiPanelHeader">
-          <div>
-            <h3>Stored Quant Results</h3>
-            <p>{quantCandidates.length ? `${quantCandidates.length} ranked candidates in the latest quant artifact.` : "No stored quant result."}</p>
-          </div>
-        </div>
-
+      <CollapsibleSection
+        title="Stored Quant Results"
+        subtitle={quantCandidates.length ? `${quantCandidates.length} ranked candidates in the latest quant artifact.` : "No stored quant result."}
+        defaultOpen={false}
+        bodyClassName="scrollRegion"
+      >
         {quantCandidates.length === 0 ? (
           <div className="aiEmpty">Run the AI decision workflow to generate a fresh quant ranking.</div>
         ) : (
@@ -305,7 +414,11 @@ export default function Strategies() {
                 {quantCandidates.map(item => (
                   <tr key={item.symbol}>
                     <td>{item.rank ?? "—"}</td>
-                    <td><strong>{item.symbol}</strong></td>
+                    <td>
+                      <button className="symbolLinkButton" onClick={() => openMarket(item.symbol, item.name)}>
+                        {item.symbol}
+                      </button>
+                    </td>
                     <td>{item.name || "—"}</td>
                     <td>{fmtScore(item.quant?.composite_score)}</td>
                     <td>{fmtScore(item.quant?.signal_confidence)}</td>
@@ -316,16 +429,14 @@ export default function Strategies() {
             </table>
           </div>
         )}
-      </section>
+      </CollapsibleSection>
 
-      <section className="aiPanel">
-        <div className="aiPanelHeader">
-          <div>
-            <h3>AI Decisions & Reasoning</h3>
-            <p>AI proposes portfolio intent. Cerebro sizes and risk-checks orders deterministically.</p>
-          </div>
-        </div>
-
+      <CollapsibleSection
+        title="AI Decisions & Reasoning"
+        subtitle="AI proposes portfolio intent. Cerebro sizes and risk-checks orders deterministically."
+        actions={<DatabaseZap size={18}/>} 
+        bodyClassName="scrollRegion"
+      >
         {decisions.length === 0 ? (
           <div className="aiEmpty">No AI decision result yet.</div>
         ) : (
@@ -333,53 +444,57 @@ export default function Strategies() {
             {decisions.map(item => {
               const proposal = proposalBySymbol.get(item.symbol);
               return (
-                <article className="aiDecisionCard" key={item.symbol}>
-                  <div className="aiDecisionTop">
+                <details className="aiDecisionCard" key={item.symbol}>
+                  <summary className="aiDecisionTop">
                     <div className="aiDecisionIdentity">
-                      <strong>{item.symbol}</strong>
+                      <button type="button" className="symbolLinkButton" onClick={event => { event.preventDefault(); openMarket(item.symbol); }}>
+                        {item.symbol}
+                      </button>
                       <span className={`aiAction ${item.action}`}>{item.action}</span>
                     </div>
                     <span className="aiConfidence">Confidence {(Number(item.confidence || 0) * 100).toFixed(0)}%</span>
-                  </div>
+                  </summary>
 
-                  <div className="aiReasoning">{item.reasoning}</div>
+                  <div className="aiDecisionBody">
+                    <div className="aiReasoning">{item.reasoning}</div>
 
-                  <div className="aiDetailGrid">
-                    <div className="aiDetail"><span>What changed</span><p>{item.what_changed || "No material change noted."}</p></div>
-                    <div className="aiDetail"><span>Target exposure</span><strong>{item.desired_exposure_pct == null ? "—" : `${Number(item.desired_exposure_pct).toFixed(2)}%`}</strong></div>
-                    <div className="aiDetail"><span>Thesis</span><p>{item.thesis_update || "No thesis update."}</p></div>
-                    <div className="aiDetail"><span>Invalidation</span><p>{item.thesis_invalidation || "No invalidation update."}</p></div>
-                  </div>
-
-                  {proposal && (
-                    <div className="aiProposal">
-                      <div className="aiProposalHead">
-                        <strong>Deterministic proposal</strong>
-                        <span className="aiProposalStatus">{proposal.status}</span>
-                      </div>
-                      <p>{proposal.message}</p>
-                      {proposal.order && (
-                        <p><strong>{proposal.order.side}</strong> {proposal.order.quantity} shares · estimated ${Number(proposal.order.estimated_price || 0).toFixed(2)}</p>
-                      )}
-                      {proposal.risk?.risk_checks?.length > 0 && (
-                        <div className="aiRiskChecks">
-                          {proposal.risk.risk_checks.map(check => (
-                            <div key={check.name} className={`aiRiskCheck ${check.passed ? "pass" : "fail"}`}>
-                              {check.message}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                    <div className="aiDetailGrid">
+                      <div className="aiDetail"><span>What changed</span><p>{item.what_changed || "No material change noted."}</p></div>
+                      <div className="aiDetail"><span>Target exposure</span><strong>{item.desired_exposure_pct == null ? "—" : `${Number(item.desired_exposure_pct).toFixed(2)}%`}</strong></div>
+                      <div className="aiDetail"><span>Thesis</span><p>{item.thesis_update || "No thesis update."}</p></div>
+                      <div className="aiDetail"><span>Invalidation</span><p>{item.thesis_invalidation || "No invalidation update."}</p></div>
                     </div>
-                  )}
-                </article>
+
+                    {proposal && (
+                      <div className="aiProposal">
+                        <div className="aiProposalHead">
+                          <strong>Deterministic proposal</strong>
+                          <span className="aiProposalStatus">{proposal.status}</span>
+                        </div>
+                        <p>{proposal.message}</p>
+                        {proposal.order && (
+                          <p><strong>{proposal.order.side}</strong> {proposal.order.quantity} shares · estimated ${Number(proposal.order.estimated_price || 0).toFixed(2)}</p>
+                        )}
+                        {proposal.risk?.risk_checks?.length > 0 && (
+                          <div className="aiRiskChecks">
+                            {proposal.risk.risk_checks.map(check => (
+                              <div key={check.name} className={`aiRiskCheck ${check.passed ? "pass" : "fail"}`}>
+                                {check.message}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </details>
               );
             })}
           </div>
         )}
 
         {decisions.length > 0 && !autoExecuted && approvalMode === "MANUAL" && (
-          <div className="aiDecisionActions">
+          <div className="aiDecisionActions stickyDecisionActions">
             <button className="aiDanger" disabled={busy} onClick={() => act("reject")}>
               <XCircle size={15}/> Reject
             </button>
@@ -388,7 +503,7 @@ export default function Strategies() {
             </button>
           </div>
         )}
-      </section>
+      </CollapsibleSection>
     </div>
   );
 }
