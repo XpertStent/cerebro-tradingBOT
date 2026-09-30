@@ -81,7 +81,12 @@ class LocalDiscovery:
             else consensus_bonus
         )
 
-        excluded = {"US.SPY"}
+        configured_benchmark = str(
+            settings.get("quant.benchmark_symbol")
+            or "US.SPY"
+        ).upper()
+
+        excluded = {"US.SPY", configured_benchmark}
         excluded.update(
             str(symbol).upper()
             for symbol in (excluded_symbols or [])
