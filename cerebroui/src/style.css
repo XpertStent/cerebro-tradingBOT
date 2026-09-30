@@ -1358,3 +1358,235 @@ header p {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* ================================
+   Portfolio
+================================ */
+
+.portfolioTopbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.portfolioTopbar h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.portfolioTopbar p {
+  margin: 5px 0 0;
+  color: #8490a2;
+  font-size: 13px;
+}
+
+.portfolioActions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.portfolioMode {
+  background: #eef2ff;
+  color: #4f46e5;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.portfolioRefresh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+
+.portfolioMetrics {
+  display: grid;
+  grid-template-columns:
+    repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.portfolioMetric {
+  background: white;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  padding: 17px;
+
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.portfolioMetricIcon {
+  width: 39px;
+  height: 39px;
+  border-radius: 10px;
+
+  display: grid;
+  place-items: center;
+
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.portfolioMetric span {
+  display: block;
+  color: #8490a2;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.portfolioMetric strong {
+  font-size: 19px;
+}
+
+.pnlGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.pnlCard {
+  background: white;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  padding: 18px;
+}
+
+.pnlCard span {
+  display: block;
+  color: #8490a2;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.pnlCard strong {
+  font-size: 22px;
+}
+
+.positionsPanel {
+  background: white;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  padding: 19px;
+}
+
+.positionsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.positionsHeader h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.positionsHeader p {
+  margin: 4px 0 0;
+  color: #8490a2;
+  font-size: 12px;
+}
+
+.positionCount {
+  min-width: 28px;
+  height: 28px;
+
+  display: grid;
+  place-items: center;
+
+  background: #f1f5f9;
+  border-radius: 999px;
+
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.positionsTableWrap {
+  overflow-x: auto;
+}
+
+.positionsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.positionsTable th {
+  text-align: left;
+  color: #8490a2;
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 9px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.positionsTable td {
+  padding: 12px 9px;
+  border-bottom: 1px solid #eef2f7;
+  white-space: nowrap;
+}
+
+.positionsTable td strong,
+.positionsTable td span {
+  display: block;
+}
+
+.positionsTable td span {
+  color: #8490a2;
+  font-size: 10px;
+  margin-top: 3px;
+}
+
+.positionsEmpty {
+  text-align: center;
+  color: #94a3b8;
+  padding: 35px !important;
+}
+
+.portfolioError {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 9px;
+  padding: 11px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+
+
+@media (max-width: 1000px) {
+
+  .portfolioMetrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+}
+
+
+@media (max-width: 650px) {
+
+  .portfolioMetrics,
+  .pnlGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolioTopbar {
+    flex-direction: column;
+  }
+
+}
