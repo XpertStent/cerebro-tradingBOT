@@ -969,3 +969,392 @@ header p {
   }
 
 }
+
+
+/* ================================
+   Orders
+================================ */
+
+.ordersLayout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.orderEntryPanel,
+.riskPanel,
+.orderHistoryPanel {
+  background: #fff;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.ordersSectionHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.ordersSectionHeader h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.ordersSectionHeader p {
+  margin: 5px 0 0;
+  color: #8490a2;
+  font-size: 13px;
+}
+
+.paperBadge {
+  background: #eef2ff;
+  color: #4f46e5;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.orderField {
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.orderField > label {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 7px;
+}
+
+.orderField input,
+.orderField select {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #dbe1e8;
+  border-radius: 9px;
+  background: #fff;
+  outline: none;
+  font-size: 14px;
+}
+
+.orderSymbolSearch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #dbe1e8;
+  border-radius: 9px;
+  padding-left: 11px;
+}
+
+.orderSymbolSearch svg {
+  color: #94a3b8;
+}
+
+.orderSymbolSearch input {
+  border: 0;
+}
+
+.orderSuggestions {
+  position: absolute;
+  top: 68px;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(15,23,42,.12);
+  max-height: 270px;
+  overflow: auto;
+}
+
+.orderSuggestions button {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  background: white;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.orderSuggestions button:hover {
+  background: #f8fafc;
+}
+
+.orderSuggestions strong,
+.orderSuggestions span {
+  display: block;
+}
+
+.orderSuggestions span,
+.orderSuggestions small {
+  color: #8490a2;
+  font-size: 11px;
+}
+
+.selectedSymbol {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.sideSelector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.sideSelector button {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-radius: 9px;
+  padding: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sideSelector .buy.selected {
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #86efac;
+}
+
+.sideSelector .sell.selected {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+.orderFormGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.previewButton,
+.executeButton {
+  width: 100%;
+  border: 0;
+  border-radius: 9px;
+  padding: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.previewButton {
+  background: #111827;
+  color: white;
+}
+
+.executeButton {
+  margin-top: 16px;
+  background: #2563eb;
+  color: white;
+}
+
+.executeButton:disabled,
+.previewButton:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.orderMessage {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.orderMessage.success {
+  background: #ecfdf5;
+  color: #166534;
+}
+
+.orderMessage.error {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.riskEmpty {
+  padding: 55px 20px;
+  text-align: center;
+  color: #94a3b8;
+}
+
+.riskDecision {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 10px;
+  margin-bottom: 15px;
+}
+
+.riskDecision.approved {
+  background: #ecfdf5;
+  color: #166534;
+}
+
+.riskDecision.blocked {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.riskDecision strong,
+.riskDecision span {
+  display: block;
+}
+
+.riskDecision span {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.previewSummary {
+  border: 1px solid #edf0f4;
+  border-radius: 10px;
+  padding: 4px 13px;
+}
+
+.previewRow {
+  display: flex;
+  justify-content: space-between;
+  padding: 9px 0;
+  border-bottom: 1px solid #edf0f4;
+  font-size: 13px;
+}
+
+.previewRow:last-child {
+  border-bottom: 0;
+}
+
+.previewRow span {
+  color: #8490a2;
+}
+
+.riskChecks {
+  margin-top: 14px;
+}
+
+.riskCheck {
+  display: flex;
+  gap: 9px;
+  padding: 8px 0;
+}
+
+.riskCheckDot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+}
+
+.riskCheck.pass .riskCheckDot {
+  background: #22c55e;
+}
+
+.riskCheck.fail .riskCheckDot {
+  background: #ef4444;
+}
+
+.riskCheck strong {
+  display: block;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.riskCheck p {
+  margin: 2px 0 0;
+  color: #7c8797;
+  font-size: 11px;
+}
+
+.refreshOrders {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e2e8f0;
+  background: white;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.ordersTableWrap {
+  overflow-x: auto;
+}
+
+.ordersTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ordersTable th {
+  text-align: left;
+  color: #8490a2;
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 9px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ordersTable td {
+  padding: 11px 9px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.ordersTable td strong,
+.ordersTable td span {
+  display: block;
+}
+
+.ordersTable td span {
+  color: #8490a2;
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.sideBuy {
+  color: #15803d !important;
+  font-weight: 800;
+}
+
+.sideSell {
+  color: #b91c1c !important;
+  font-weight: 800;
+}
+
+.orderStatusBadge {
+  display: inline-block !important;
+  background: #f1f5f9;
+  color: #475569 !important;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.ordersEmpty {
+  text-align: center;
+  color: #94a3b8;
+  padding: 30px !important;
+}
+
+@media (max-width: 900px) {
+  .ordersLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .orderFormGrid {
+    grid-template-columns: 1fr;
+  }
+}
