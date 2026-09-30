@@ -8,6 +8,7 @@ import {
   ExternalLink
 } from "lucide-react";
 import CollapsibleSection from "./CollapsibleSection";
+import "./OrdersEnhancements.css";
 
 function money(value) {
   if (value === null || value === undefined) return "—";
