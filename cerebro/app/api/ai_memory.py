@@ -269,3 +269,27 @@ def active_thesis(
         )
 
     return thesis
+
+
+from app.services.ai_context import ai_context
+
+
+@router.get("/context/{symbol:path}")
+def symbol_context(
+    symbol: str,
+    decision_limit: int = Query(
+        10,
+        ge=1,
+        le=50
+    ),
+    rejection_limit: int = Query(
+        10,
+        ge=1,
+        le=50
+    )
+):
+    return ai_context.build_symbol_context(
+        symbol=symbol,
+        decision_limit=decision_limit,
+        rejection_limit=rejection_limit
+    )
