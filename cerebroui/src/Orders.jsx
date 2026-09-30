@@ -12,7 +12,7 @@ export default function Orders() {
   const [symbol, setSymbol] = useState("US.AAPL");
 
   const [side, setSide] = useState("BUY");
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity] = useState("");
   const [orderType, setOrderType] = useState("MARKET");
   const [limitPrice, setLimitPrice] = useState("");
 
