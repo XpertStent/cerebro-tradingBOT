@@ -1,23 +1,22 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  Activity,
+  AlertTriangle,
   BrainCircuit,
   CheckCircle2,
   Clock3,
-  Play,
-  RefreshCw,
-  ShieldCheck,
-  Trash2,
-  XCircle,
-  Activity,
   DatabaseZap,
   Eraser,
+  Play,
+  RefreshCw,
   SearchCheck,
-  AlertTriangle
+  ShieldCheck,
+  Trash2,
+  XCircle
 } from "lucide-react";
 
 import "./AIEngine.css";
 import CollapsibleSection from "./CollapsibleSection";
-
 
 function fmtScore(value) {
   const n = Number(value);
@@ -39,11 +38,16 @@ function fmtElapsed(value) {
 }
 
 function openMarket(symbol, name = "") {
-  window.dispatchEvent(
-    new CustomEvent("cerebro-open-market", {
-      detail: { symbol, name }
-    })
-  );
+  window.dispatchEvent(new CustomEvent("cerebro-open-market", { detail: { symbol, name } }));
+}
+
+function pretty(value) {
+  if (value == null) return "No additional detail available yet.";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (_) {
+    return String(value);
+  }
 }
 
 export default function Strategies() {
@@ -55,6 +59,7 @@ export default function Strategies() {
   const [decisionBusyId, setDecisionBusyId] = useState(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const [message, setMessage] = useState(null);
+  const [selectedResearchSymbol, setSelectedResearchSymbol] = useState(null);
 
   const decisions = bundle?.ai?.decision?.decisions || [];
   const proposals = bundle?.execution?.proposals || [];
@@ -65,9 +70,11 @@ export default function Strategies() {
   const autoExecuted = approvalMode === "AUTO";
   const running = progress?.status === "RUNNING" || progress?.status === "QUEUED";
   const researchSymbols = progress?.ai?.research_symbols || {};
+  const liveResearchDetails = progress?.ai?.research_details || {};
   const events = progress?.events || [];
   const decisionContext = bundle?.ai?.context || {};
   const researchBatchCount = decisionContext?.run?.research_parallel_batches;
+  const decisionWebResearch = progress?.ai?.decision_web_research || bundle?.ai?.decision_web_research;
 
   const proposalBySymbol = useMemo(() => {
     const map = new Map();
@@ -89,9 +96,20 @@ export default function Strategies() {
       .map(item => ({
         symbol: item.symbol,
         name: item.market_snapshot?.name || "",
-        error: item.research_context?.error || "Unknown research error"
+        error: item.research_context?.error || "Unknown research error",
+        payload: item.research_context
       }))
   ), [decisionContext]);
+
+  const selectedResearch = useMemo(() => {
+    if (!selectedResearchSymbol) return null;
+    const candidate = candidateBySymbol.get(selectedResearchSymbol);
+    if (candidate?.research_context) return candidate.research_context;
+    return liveResearchDetails[selectedResearchSymbol] || {
+      symbol: selectedResearchSymbol,
+      status: researchSymbols[selectedResearchSymbol] || "PENDING"
+    };
+  }, [selectedResearchSymbol, candidateBySymbol, liveResearchDetails, researchSymbols]);
 
   async function loadLatest() {
     try {
@@ -103,8 +121,13 @@ export default function Strategies() {
       if (aiRes.ok) {
         const data = await aiRes.json();
         const next = unwrapLatest(data);
-        setBundle(next);
-        if (next) setRunId(next.run_id || data?.result?.run_id || null);
+        if (next?.status && !next?.ai && !next?.execution) {
+          setProgress(next);
+          setRunId(next.run_id || null);
+        } else {
+          setBundle(next);
+          if (next) setRunId(next.run_id || data?.result?.run_id || null);
+        }
       }
 
       if (quantRes.ok) {
@@ -116,9 +139,7 @@ export default function Strategies() {
 
   async function refreshResult(id = runId) {
     if (!id) return;
-    const response = await fetch(`/api/ai/decision/result/${encodeURIComponent(id)}`, {
-      cache: "no-store"
-    });
+    const response = await fetch(`/api/ai/decision/result/${encodeURIComponent(id)}`, { cache: "no-store" });
     const data = await response.json();
     if (response.ok && data.result) {
       setBundle(data.result);
@@ -131,10 +152,9 @@ export default function Strategies() {
     setMessage(null);
     setBundle(null);
     setProgress(null);
+    setSelectedResearchSymbol(null);
     try {
-      const response = await fetch("/api/ai/decision/run?run_type=MANUAL", {
-        method: "POST"
-      });
+      const response = await fetch("/api/ai/decision/run?run_type=MANUAL", { method: "POST" });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
@@ -151,7 +171,6 @@ export default function Strategies() {
 
   async function actOne(proposal, action) {
     if (!runId || !proposal?.decision_id) return;
-
     if (action === "approve") {
       const ok = window.confirm(
         `Approve only ${proposal.symbol} and submit its PAPER order? No other AI decision will be approved.`
@@ -187,8 +206,6 @@ export default function Strategies() {
 
   async function actAll(action) {
     if (!runId || pendingProposals.length === 0) return;
-
-    const verb = action === "approve" ? "approve and execute" : "reject";
     const ok = window.confirm(
       action === "approve"
         ? `Approve ALL ${pendingProposals.length} remaining AI proposals? Each proposal will still be revalidated and submitted individually to the PAPER account.`
@@ -207,7 +224,6 @@ export default function Strategies() {
           failures.push(`${proposal?.symbol || "Unknown"}: missing decision id`);
           continue;
         }
-
         try {
           const response = await fetch(
             `/api/ai/decision/${encodeURIComponent(runId)}/proposal/${encodeURIComponent(proposal.decision_id)}/${action}`,
@@ -223,22 +239,16 @@ export default function Strategies() {
           failures.push(`${proposal.symbol}: ${error.message}`);
         }
       }
-
       await refreshResult(runId);
-
-      if (failures.length) {
-        setMessage({
-          kind: "error",
-          text: `${completed}/${pendingProposals.length} proposals ${verb}d. ${failures.length} failed: ${failures.join(" | ")}`
-        });
-      } else {
-        setMessage({
-          kind: "ok",
-          text: action === "approve"
-            ? `All ${completed} remaining proposals were approved and individually sent through final PAPER execution checks.`
-            : `All ${completed} remaining proposals were rejected. No orders were submitted for them.`
-        });
-      }
+      setMessage(failures.length ? {
+        kind: "error",
+        text: `${completed}/${pendingProposals.length} completed. ${failures.length} failed: ${failures.join(" | ")}`
+      } : {
+        kind: "ok",
+        text: action === "approve"
+          ? `All ${completed} remaining proposals were approved and individually sent through final PAPER execution checks.`
+          : `All ${completed} remaining proposals were rejected. No orders were submitted for them.`
+      });
     } finally {
       setBatchBusy(false);
     }
@@ -258,6 +268,7 @@ export default function Strategies() {
         setBundle(null);
         setRunId(null);
         setProgress(null);
+        setSelectedResearchSymbol(null);
       } else {
         setLatestQuant(null);
       }
@@ -270,15 +281,10 @@ export default function Strategies() {
   }
 
   async function clearAllHistory() {
-    const ok = window.confirm(
+    if (!window.confirm(
       "TEST RESET ONLY: delete ALL stored AI decision history, theses, outcomes and run history? Broker orders, settings, quant history and market data are not deleted."
-    );
-    if (!ok) return;
-
-    const second = window.confirm(
-      "This cannot be undone. Clear all AI decision memory now?"
-    );
-    if (!second) return;
+    )) return;
+    if (!window.confirm("This cannot be undone. Clear all AI decision memory now?")) return;
 
     setBusy(true);
     setMessage(null);
@@ -289,10 +295,8 @@ export default function Strategies() {
       setBundle(null);
       setRunId(null);
       setProgress(null);
-      setMessage({
-        kind: "ok",
-        text: "All AI decision history and theses cleared for testing."
-      });
+      setSelectedResearchSymbol(null);
+      setMessage({ kind: "ok", text: "All AI decision history and theses cleared for testing." });
     } catch (error) {
       setMessage({ kind: "error", text: error.message });
     } finally {
@@ -300,9 +304,7 @@ export default function Strategies() {
     }
   }
 
-  useEffect(() => {
-    loadLatest();
-  }, []);
+  useEffect(() => { loadLatest(); }, []);
 
   useEffect(() => {
     if (!runId) return;
@@ -311,14 +313,10 @@ export default function Strategies() {
 
     async function poll() {
       try {
-        const response = await fetch(
-          `/api/ai/decision/progress/${encodeURIComponent(runId)}`,
-          { cache: "no-store" }
-        );
+        const response = await fetch(`/api/ai/decision/progress/${encodeURIComponent(runId)}`, { cache: "no-store" });
         const data = await response.json();
         if (cancelled || !response.ok) return;
         setProgress(data);
-
         if (data.status === "COMPLETE") {
           await refreshResult(runId);
           return;
@@ -344,37 +342,30 @@ export default function Strategies() {
     ? "failed"
     : progress?.status === "COMPLETE"
       ? "complete"
-      : progress?.status
-        ? "running"
-        : "";
+      : progress?.status ? "running" : "";
 
   return (
     <div className="aiEnginePage">
       <section className="aiHero">
         <div>
           <h2>AI Decision Engine</h2>
-          <p>Quant → clustered research → decision model → deterministic risk → individual approval.</p>
+          <p>Quant → clustered research → independent decision-model web verification → deterministic risk → approval.</p>
         </div>
         <div className="aiHeroActions">
           <button className="aiPrimary" onClick={startManualRun} disabled={busy || running}>
-            <Play size={15}/>
-            {running ? "Running…" : "Run AI Decision"}
+            <Play size={15}/>{running ? "Running…" : "Run AI Decision"}
           </button>
           <button className="aiSecondary" onClick={loadLatest} disabled={busy || running}>
-            <RefreshCw size={15}/>
-            Refresh
+            <RefreshCw size={15}/>Refresh
           </button>
           <button className="aiDanger" onClick={() => clearStored("quant")} disabled={busy || running}>
-            <Trash2 size={14}/>
-            Clear Quant
+            <Trash2 size={14}/>Clear Quant
           </button>
           <button className="aiDanger" onClick={() => clearStored("ai")} disabled={busy || running}>
-            <Trash2 size={14}/>
-            Clear AI Result
+            <Trash2 size={14}/>Clear AI Result
           </button>
           <button className="aiDanger strongDanger" onClick={clearAllHistory} disabled={busy || running}>
-            <Eraser size={14}/>
-            Clear All AI History
+            <Eraser size={14}/>Clear All AI History
           </button>
         </div>
       </section>
@@ -391,10 +382,7 @@ export default function Strategies() {
           </span>
         }
       >
-        <div className="aiProgressTrack">
-          <div className="aiProgressFill" style={{ width: `${Number(progress?.percent || 0)}%` }}/>
-        </div>
-
+        <div className="aiProgressTrack"><div className="aiProgressFill" style={{ width: `${Number(progress?.percent || 0)}%` }}/></div>
         <div className="aiProgressMeta">
           <div className="aiMetric"><span>Overall</span><strong>{Number(progress?.percent || 0).toFixed(1)}%</strong></div>
           <div className="aiMetric"><span>Elapsed</span><strong>{fmtElapsed(progress?.elapsed_seconds)}</strong></div>
@@ -407,16 +395,16 @@ export default function Strategies() {
           <div className="aiMetric"><span>In Flight</span><strong>{progress?.ai?.research_in_flight ?? "—"}</strong></div>
           <div className="aiMetric"><span>Research Ready</span><strong>{progress?.ai?.research_ready ?? "—"}</strong></div>
           <div className={`aiMetric ${Number(progress?.ai?.research_errors || 0) > 0 ? "metricError" : ""}`}><span>Research Errors</span><strong>{progress?.ai?.research_errors ?? "—"}</strong></div>
-          <div className="aiMetric"><span>Latest Research</span><strong>{progress?.ai?.research_current_symbol || "—"}</strong></div>
-          <div className="aiMetric"><span>Model Active</span><strong>{progress?.ai?.stage === "DECISION_MODEL" ? `Yes · ${fmtElapsed(progress?.ai?.model_elapsed_seconds)}` : "No"}</strong></div>
+          <div className="aiMetric"><span>Decision Web Research</span><strong>{decisionWebResearch?.enabled ? (decisionWebResearch.status || `${decisionWebResearch.calls || 0} calls`) : "Disabled"}</strong></div>
+          <div className="aiMetric"><span>Model Active</span><strong>{["DECISION_MODEL", "DECISION_RETRY"].includes(progress?.ai?.stage) ? `Yes · ${fmtElapsed(progress?.ai?.model_elapsed_seconds)}` : "No"}</strong></div>
         </div>
 
-        {progress?.ai?.stage === "DECISION_MODEL" && (
+        {["DECISION_MODEL", "DECISION_RETRY"].includes(progress?.ai?.stage) && (
           <div className="aiThinkingBanner">
             <BrainCircuit size={18}/>
             <div>
-              <strong>Decision model request is active</strong>
-              <span>Cerebro shows request/stage timing and completed structured reasoning, without exposing private chain-of-thought.</span>
+              <strong>Decision model is analysing the portfolio and can independently use live web search</strong>
+              <span>It receives the clustered research plus risk/portfolio context, and may verify current evidence itself before returning the final structured decisions.</span>
             </div>
           </div>
         )}
@@ -428,17 +416,12 @@ export default function Strategies() {
         defaultOpen={running}
         bodyClassName="scrollRegion compact"
       >
-        {events.length === 0 ? (
-          <div className="aiEmpty">No live workflow events yet.</div>
-        ) : (
+        {events.length === 0 ? <div className="aiEmpty">No live workflow events yet.</div> : (
           <div className="aiEventList">
             {events.slice().reverse().map((event, index) => (
               <div className={`aiEvent ${event.kind === "ERROR" ? "error" : event.kind === "SUCCESS" ? "success" : ""}`} key={`${event.at}-${index}`}>
                 <Activity size={14}/>
-                <div>
-                  <strong>{event.stage}</strong>
-                  <span>{event.message}</span>
-                </div>
+                <div><strong>{event.stage}</strong><span>{event.message}</span></div>
                 <time>{new Date(event.at).toLocaleTimeString()}</time>
               </div>
             ))}
@@ -448,49 +431,56 @@ export default function Strategies() {
 
       <CollapsibleSection
         title="Live Research Status"
-        subtitle="Symbols are grouped into the configured number of balanced parallel research/news requests. Transient failures are retried automatically."
+        subtitle="Click a symbol here to inspect its research result, retry state, or exact error inside Strategies."
         defaultOpen={running && progress?.stage === "RESEARCH_AND_CONTEXT"}
-        bodyClassName="scrollRegion compact"
       >
-        {Object.keys(researchSymbols).length === 0 ? (
-          <div className="aiEmpty">Research has not returned any symbol results yet.</div>
-        ) : (
-          <div className="researchSymbolGrid">
-            {Object.entries(researchSymbols).map(([symbol, status]) => (
-              <button key={symbol} className="researchSymbol" onClick={() => openMarket(symbol)}>
-                <SearchCheck size={14}/>
-                <strong>{symbol}</strong>
-                <span className={status === "ERROR" ? "bad" : "good"}>{status}</span>
-              </button>
-            ))}
-          </div>
+        {Object.keys(researchSymbols).length === 0 ? <div className="aiEmpty">Research has not returned any symbol results yet.</div> : (
+          <>
+            <div className="researchSymbolGrid">
+              {Object.entries(researchSymbols).map(([symbol, status]) => (
+                <button
+                  key={symbol}
+                  className={`researchSymbol ${selectedResearchSymbol === symbol ? "selected" : ""}`}
+                  onClick={() => setSelectedResearchSymbol(symbol)}
+                >
+                  <SearchCheck size={14}/>
+                  <strong>{symbol}</strong>
+                  <span className={status === "ERROR" ? "bad" : status === "RETRY" ? "retry" : "good"}>{status}</span>
+                </button>
+              ))}
+            </div>
+
+            {selectedResearchSymbol && (
+              <div className={`researchInspector ${selectedResearch?.status === "ERROR" ? "error" : ""}`}>
+                <div className="researchInspectorHead">
+                  <div>
+                    <strong>{selectedResearchSymbol}</strong>
+                    <span>{selectedResearch?.status || "PENDING"}</span>
+                  </div>
+                  <button className="aiSecondary" onClick={() => setSelectedResearchSymbol(null)}>Close detail</button>
+                </div>
+                <pre>{pretty(selectedResearch)}</pre>
+              </div>
+            )}
+          </>
         )}
       </CollapsibleSection>
 
       {researchErrors.length > 0 && (
         <CollapsibleSection
           title={`Research Errors (${researchErrors.length})`}
-          subtitle="Click an errored symbol to see the exact final error returned after automatic retries."
+          subtitle="Expand an errored symbol to see the exact returned error and stored research payload."
           defaultOpen={true}
-          bodyClassName="scrollRegion compact"
           actions={<AlertTriangle size={18}/>} 
         >
           <div className="researchErrorList">
             {researchErrors.map(item => (
               <details className="researchErrorCard" key={item.symbol}>
                 <summary>
-                  <div>
-                    <strong>{item.symbol}</strong>
-                    <span>{item.name || "Research request failed"}</span>
-                  </div>
+                  <div><strong>{item.symbol}</strong><span>{item.name || "Research request failed"}</span></div>
                   <span>View error</span>
                 </summary>
-                <div className="researchErrorBody">
-                  <pre>{item.error}</pre>
-                  <button className="aiSecondary" onClick={() => openMarket(item.symbol, item.name)}>
-                    Open {item.symbol} in Markets
-                  </button>
-                </div>
+                <div className="researchErrorBody"><pre>{pretty(item.payload || item.error)}</pre></div>
               </details>
             ))}
           </div>
@@ -507,6 +497,7 @@ export default function Strategies() {
             <div className="aiSummaryCard"><span>Portfolio</span><strong>{bundle.ai.decision.portfolio_summary || "—"}</strong></div>
             <div className="aiSummaryCard"><span>Market</span><strong>{bundle.ai.decision.market_summary || "—"}</strong></div>
             <div className="aiSummaryCard"><span>Decisions</span><strong>{decisions.length} · {pendingCount} awaiting approval</strong></div>
+            <div className="aiSummaryCard"><span>Decision web verification</span><strong>{bundle.ai.decision_web_research?.enabled ? `${bundle.ai.decision_web_research.calls || 0} search calls · ${bundle.ai.decision_web_research.source_count || 0} unique sources observed` : "Disabled"}</strong></div>
           </div>
         </CollapsibleSection>
       )}
@@ -517,23 +508,15 @@ export default function Strategies() {
         defaultOpen={false}
         bodyClassName="scrollRegion"
       >
-        {quantCandidates.length === 0 ? (
-          <div className="aiEmpty">Run the AI decision workflow to generate a fresh quant ranking.</div>
-        ) : (
+        {quantCandidates.length === 0 ? <div className="aiEmpty">Run the AI decision workflow to generate a fresh quant ranking.</div> : (
           <div className="aiQuantTableWrap">
             <table className="aiQuantTable">
-              <thead>
-                <tr><th>Rank</th><th>Symbol</th><th>Name</th><th>Composite</th><th>Confidence</th><th>Agreement</th></tr>
-              </thead>
+              <thead><tr><th>Rank</th><th>Symbol</th><th>Name</th><th>Composite</th><th>Confidence</th><th>Agreement</th></tr></thead>
               <tbody>
                 {quantCandidates.map(item => (
                   <tr key={item.symbol}>
                     <td>{item.rank ?? "—"}</td>
-                    <td>
-                      <button className="symbolLinkButton" onClick={() => openMarket(item.symbol, item.name)}>
-                        {item.symbol}
-                      </button>
-                    </td>
+                    <td><button className="symbolLinkButton" onClick={() => openMarket(item.symbol, item.name)}>{item.symbol}</button></td>
                     <td>{item.name || "—"}</td>
                     <td>{fmtScore(item.quant?.composite_score)}</td>
                     <td>{fmtScore(item.quant?.signal_confidence)}</td>
@@ -548,13 +531,11 @@ export default function Strategies() {
 
       <CollapsibleSection
         title="AI Decisions & Reasoning"
-        subtitle="Use individual controls per proposal, or resolve all remaining actionable proposals together below."
+        subtitle="Open only the decisions you want to inspect; individual and bulk approval controls remain available."
         actions={<DatabaseZap size={18}/>} 
         bodyClassName="scrollRegion"
       >
-        {decisions.length === 0 ? (
-          <div className="aiEmpty">No AI decision result yet.</div>
-        ) : (
+        {decisions.length === 0 ? <div className="aiEmpty">No AI decision result yet.</div> : (
           <>
             <div className="aiDecisionList">
               {decisions.map(item => {
@@ -563,42 +544,25 @@ export default function Strategies() {
                 const research = candidate?.research_context;
                 const researchStatus = research?.status || (candidate ? "NOT_AVAILABLE" : null);
                 const proposalBusy = decisionBusyId === proposal?.decision_id;
-                const canDecide = (
-                  !autoExecuted &&
-                  ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) &&
-                  proposal?.status === "PENDING_APPROVAL"
-                );
+                const canDecide = !autoExecuted && ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) && proposal?.status === "PENDING_APPROVAL";
 
                 return (
                   <details className="aiDecisionCard" key={item.symbol}>
                     <summary className="aiDecisionTop">
                       <div className="aiDecisionIdentity">
-                        <button type="button" className="symbolLinkButton" onClick={event => { event.preventDefault(); openMarket(item.symbol); }}>
-                          {item.symbol}
-                        </button>
+                        <button type="button" className="symbolLinkButton" onClick={event => { event.preventDefault(); openMarket(item.symbol); }}>{item.symbol}</button>
                         <span className={`aiAction ${item.action}`}>{item.action}</span>
-                        {researchStatus && (
-                          <span className={`aiResearchBadge ${researchStatus === "READY" ? "ready" : researchStatus === "ERROR" ? "error" : "neutral"}`}>
-                            Research {researchStatus}
-                          </span>
-                        )}
+                        {researchStatus && <span className={`aiResearchBadge ${researchStatus === "READY" ? "ready" : researchStatus === "ERROR" ? "error" : "neutral"}`}>Research {researchStatus}</span>}
                       </div>
                       <span className="aiConfidence">Confidence {(Number(item.confidence || 0) * 100).toFixed(0)}%</span>
                     </summary>
 
                     <div className="aiDecisionBody">
                       <div className="aiReasoning">{item.reasoning}</div>
-
                       {research && (
                         <div className={`aiResearchDiagnostic ${research.status === "ERROR" ? "error" : ""}`}>
                           <strong>Research diagnostic</strong>
-                          {research.status === "READY" ? (
-                            <span>
-                              READY · {research.source_count ?? 0} retained sources · {research.cache || "LIVE"}
-                            </span>
-                          ) : (
-                            <span>{research.error || "No structured research was returned for this symbol."}</span>
-                          )}
+                          <span>{research.status === "READY" ? `READY · ${research.source_count ?? 0} retained sources · ${research.cache || "LIVE"}` : (research.error || "No structured research was returned for this symbol.")}</span>
                         </div>
                       )}
 
@@ -611,41 +575,22 @@ export default function Strategies() {
 
                       {proposal && (
                         <div className="aiProposal">
-                          <div className="aiProposalHead">
-                            <strong>Deterministic proposal</strong>
-                            <span className="aiProposalStatus">{proposal.status}</span>
-                          </div>
+                          <div className="aiProposalHead"><strong>Deterministic proposal</strong><span className="aiProposalStatus">{proposal.status}</span></div>
                           <p>{proposal.message}</p>
-                          {proposal.order && (
-                            <p><strong>{proposal.order.side}</strong> {proposal.order.quantity} shares · estimated ${Number(proposal.order.estimated_price || 0).toFixed(2)}</p>
-                          )}
+                          {proposal.order && <p><strong>{proposal.order.side}</strong> {proposal.order.quantity} shares · estimated ${Number(proposal.order.estimated_price || 0).toFixed(2)}</p>}
                           {proposal.risk?.risk_checks?.length > 0 && (
                             <div className="aiRiskChecks">
-                              {proposal.risk.risk_checks.map(check => (
-                                <div key={check.name} className={`aiRiskCheck ${check.passed ? "pass" : "fail"}`}>
-                                  {check.message}
-                                </div>
-                              ))}
+                              {proposal.risk.risk_checks.map(check => <div key={check.name} className={`aiRiskCheck ${check.passed ? "pass" : "fail"}`}>{check.message}</div>)}
                             </div>
                           )}
 
                           {canDecide && (
                             <div className="aiPerDecisionActions">
-                              <button
-                                className="aiDanger"
-                                disabled={proposalBusy || batchBusy}
-                                onClick={() => actOne(proposal, "reject")}
-                              >
-                                <XCircle size={15}/>
-                                {proposalBusy ? "Working…" : "Reject this decision"}
+                              <button className="aiDanger" disabled={proposalBusy || batchBusy} onClick={() => actOne(proposal, "reject")}>
+                                <XCircle size={15}/>{proposalBusy ? "Working…" : "Reject this decision"}
                               </button>
-                              <button
-                                className="aiPrimary"
-                                disabled={proposalBusy || batchBusy}
-                                onClick={() => actOne(proposal, "approve")}
-                              >
-                                <CheckCircle2 size={15}/>
-                                {proposalBusy ? "Working…" : "Approve & Execute this order"}
+                              <button className="aiPrimary" disabled={proposalBusy || batchBusy} onClick={() => actOne(proposal, "approve")}>
+                                <CheckCircle2 size={15}/>{proposalBusy ? "Working…" : "Approve & Execute this order"}
                               </button>
                             </div>
                           )}
@@ -659,21 +604,11 @@ export default function Strategies() {
 
             {!autoExecuted && pendingCount > 0 && ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) && (
               <div className="aiPerDecisionActions">
-                <button
-                  className="aiDanger"
-                  disabled={batchBusy || decisionBusyId != null}
-                  onClick={() => actAll("reject")}
-                >
-                  <XCircle size={15}/>
-                  {batchBusy ? "Working…" : `Reject All Remaining (${pendingCount})`}
+                <button className="aiDanger" disabled={batchBusy || decisionBusyId != null} onClick={() => actAll("reject")}>
+                  <XCircle size={15}/>{batchBusy ? "Working…" : `Reject All Remaining (${pendingCount})`}
                 </button>
-                <button
-                  className="aiPrimary"
-                  disabled={batchBusy || decisionBusyId != null}
-                  onClick={() => actAll("approve")}
-                >
-                  <CheckCircle2 size={15}/>
-                  {batchBusy ? "Working…" : `Approve All Remaining (${pendingCount})`}
+                <button className="aiPrimary" disabled={batchBusy || decisionBusyId != null} onClick={() => actAll("approve")}>
+                  <CheckCircle2 size={15}/>{batchBusy ? "Working…" : `Approve All Remaining (${pendingCount})`}
                 </button>
               </div>
             )}
