@@ -6,6 +6,7 @@ export default function CollapsibleSection({
   title,
   subtitle = null,
   actions = null,
+  footer = null,
   defaultOpen = true,
   className = "",
   children,
@@ -34,9 +35,12 @@ export default function CollapsibleSection({
         {actions ? <div className="collapsibleActions">{actions}</div> : null}
       </div>
       {open ? (
-        <div className={`collapsibleBody ${bodyClassName}`.trim()}>
-          {children}
-        </div>
+        <>
+          <div className={`collapsibleBody ${bodyClassName}`.trim()}>
+            {children}
+          </div>
+          {footer ? <div className="collapsibleFooter">{footer}</div> : null}
+        </>
       ) : null}
     </section>
   );
