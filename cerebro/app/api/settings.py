@@ -19,13 +19,17 @@ class SettingsReset(BaseModel):
 ACTIVE_PHASE_KEYS = {
     "ai.decision.model",
     "ai.decision.reasoning_effort",
+    "risk.max_daily_loss",
     "risk.max_position_pct",
     "risk.max_invested_pct",
     "risk.min_cash_reserve_pct",
     "risk.max_new_positions_per_run",
     "risk.max_order_adv_pct",
     "execution.auto_execute",
+    "execution.require_preview",
     "execution.default_order_type",
+    "execution.max_slippage_pct",
+    "execution.cooldown_minutes",
 }
 
 
@@ -50,7 +54,22 @@ def _public_snapshot():
         if key == "execution.auto_execute":
             item["label"] = "Authorize AI Auto-Execution"
             item["description"] = (
-                "When enabled, risk-approved AI broker actions execute without manual proposal approval. In LIVE mode this can submit real-money orders once trading is unlocked, so keep it OFF unless explicitly intended."
+                "When enabled, risk-approved AI broker actions execute without manual proposal approval. In LIVE mode this can submit real-money orders only while trading is deliberately unlocked; if locked, Cerebro falls back to manual approval."
+            )
+
+        if key == "execution.require_preview":
+            item["description"] = (
+                "Every manual execution performs a fresh server-side preview/risk pass even when called directly through the API. The UI also shows that preview before submission."
+            )
+
+        if key == "execution.max_slippage_pct":
+            item["description"] = (
+                "Maximum price drift allowed between an AI proposal's reference price and its fresh pre-submit price in LIVE mode."
+            )
+
+        if key == "execution.cooldown_minutes":
+            item["description"] = (
+                "LIVE BUY cooldown per symbol after a recent Cerebro live execution. SELL/REDUCE exits are not blocked by this cooldown."
             )
 
         if key == "risk.max_order_value":
@@ -60,7 +79,7 @@ def _public_snapshot():
 
         if key == "risk.max_daily_loss":
             item["description"] = (
-                "Loss guard applied against broker-reported realized P&L when available."
+                "Loss guard applied against broker-reported realized P&L when available. New execution is blocked once the configured loss threshold is breached."
             )
 
         if key == "ai.decision.model":
