@@ -1,9 +1,11 @@
 import json
+import time
 from datetime import datetime, timezone
 
 from openai import OpenAI
 
 from app.services.ai_run_context import ai_run_context
+from app.services.openai_retry import is_retryable_openai_error, retry_delay
 from app.services.settings import settings
 
 
@@ -242,12 +244,66 @@ Return only the requested structured result.
 
         return result
 
+    def _request_with_retry(
+        self,
+        *,
+        model,
+        reasoning_effort,
+        prompt,
+        retry_callback=None,
+    ):
+        """Run the single portfolio-decision request with rate-limit recovery."""
+        max_attempts = 4
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self._client().responses.create(
+                    model=model,
+                    reasoning={
+                        "effort": reasoning_effort,
+                    },
+                    input=prompt,
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": "cerebro_portfolio_decisions",
+                            "strict": True,
+                            "schema": DECISION_SCHEMA,
+                        }
+                    },
+                )
+            except Exception as exc:
+                if attempt >= max_attempts or not is_retryable_openai_error(exc):
+                    raise
+
+                delay, retry_source, provider_delay = retry_delay(
+                    exc,
+                    attempt=attempt,
+                    base_delay=2.0,
+                    safety_seconds=1.0,
+                )
+                if retry_callback:
+                    retry_callback(
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        delay_seconds=round(delay, 3),
+                        provider_retry_after_seconds=(
+                            round(provider_delay, 3)
+                            if provider_delay is not None else None
+                        ),
+                        retry_source=retry_source,
+                        error=str(exc),
+                    )
+                time.sleep(delay)
+
+        raise RuntimeError("Decision model retry loop exhausted")
+
     def run(
         self,
         *,
         run_type="MANUAL",
         enrich_research=True,
         context=None,
+        retry_callback=None,
     ):
         if context is None:
             context = ai_run_context.build(
@@ -266,20 +322,11 @@ Return only the requested structured result.
             settings.get("ai.decision.reasoning_effort")
         )
 
-        response = self._client().responses.create(
+        response = self._request_with_retry(
             model=model,
-            reasoning={
-                "effort": reasoning_effort,
-            },
-            input=self._prompt(context),
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "cerebro_portfolio_decisions",
-                    "strict": True,
-                    "schema": DECISION_SCHEMA,
-                }
-            },
+            reasoning_effort=reasoning_effort,
+            prompt=self._prompt(context),
+            retry_callback=retry_callback,
         )
 
         result = json.loads(response.output_text)
