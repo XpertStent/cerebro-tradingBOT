@@ -5,7 +5,30 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from app.services.ai_web_research import RESEARCH_SCHEMA, RESEARCH_SCHEMA_VERSION, ai_web_research
-from app.services.settings import settings
+from app.services.settings import DEFINITIONS, settings
+
+
+# Register the clustered-research control with the shared Settings registry.
+# This is intentionally a separate key from the old per-symbol worker count so
+# existing installations do not accidentally turn a saved value of 12 workers
+# into 12 large parallel batch requests.
+DEFINITIONS.setdefault(
+    "ai.research.parallel_batches",
+    {
+        "section": "AI & Models",
+        "subsection": "Research",
+        "label": "Parallel Research Clusters",
+        "type": "integer",
+        "default": 4,
+        "min": 1,
+        "max": 12,
+        "description": (
+            "Number of clustered OpenAI research/news requests run in parallel. "
+            "For example, 30 symbols with a value of 4 are split across 4 balanced "
+            "requests; a value of 6 uses 6 balanced requests."
+        ),
+    },
+)
 
 
 BATCH_SCHEMA = {
@@ -68,7 +91,7 @@ class AIResearchBatchService:
             })
 
         return f"""
-You are the research/news and evidence-validation layer for Cerebro, an
+You are the research/news and evidence-validation layer for Cerebro, a
 US-equity trading system. Research every company in this batch on the live web.
 
 This is RESEARCH ONLY. Do not recommend BUY, SELL, HOLD, WATCH, IGNORE,
