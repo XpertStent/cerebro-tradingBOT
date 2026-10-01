@@ -19,6 +19,11 @@ class OrderRequest(BaseModel):
     order_type: str = "MARKET"
     price: float | None = None
 
+    # Passed back from a manual preview. These values let execution bind
+    # itself to the preview context and make a retry idempotent.
+    preview_reference_price: float | None = None
+    execution_intent_id: str | None = None
+
 
 TERMINAL_ORDER_STATES = {
     "FILLED_ALL",
@@ -107,6 +112,15 @@ def build_preview(order: OrderRequest):
     side = order.side.upper()
     order_type = order.order_type.upper()
 
+    symbol = str(order.symbol or "").strip().upper()
+    if "." not in symbol:
+        symbol = f"US.{symbol}"
+    if not symbol.startswith("US."):
+        raise HTTPException(
+            status_code=400,
+            detail="Cerebro execution is restricted to US securities",
+        )
+
     if side not in ("BUY", "SELL"):
         raise HTTPException(status_code=400, detail="side must be BUY or SELL")
     if order_type not in ("MARKET", "LIMIT"):
@@ -116,7 +130,7 @@ def build_preview(order: OrderRequest):
     if abs(float(order.quantity) - round(float(order.quantity))) > 1e-9:
         raise HTTPException(status_code=400, detail="Cerebro currently supports whole-share orders only")
 
-    quote = opend.get_snapshot(order.symbol)
+    quote = opend.get_snapshot(symbol)
     estimated_price = float(order.price) if order_type == "LIMIT" else float(quote["price"])
 
     account = trading.get_account_summary(refresh=True)
@@ -154,11 +168,48 @@ def build_preview(order: OrderRequest):
     mode = trading.mode().upper()
     safety_checks = [
         live_safety.market_hours_check(mode=mode, symbol=quote["symbol"]),
+        live_safety.quote_freshness_check(mode=mode, snapshot=quote),
         live_safety.cooldown_check(mode=mode, symbol=quote["symbol"], side=side),
     ]
     result = live_safety.apply_checks(result, safety_checks)
+
+    if mode == "LIVE":
+        try:
+            broker_max = trading.max_tradable_quantity(
+                symbol=quote["symbol"],
+                side=side,
+                order_type=order_type,
+                price=estimated_price,
+            )
+            broker_check = {
+                "name": "broker_max_quantity",
+                "passed": float(order.quantity) <= float(broker_max["maximum"]) + 1e-9,
+                "message": (
+                    f"Requested {float(order.quantity):g} shares is within broker maximum "
+                    f"{float(broker_max['maximum']):g} ({broker_max['field']})"
+                    if float(order.quantity) <= float(broker_max["maximum"]) + 1e-9
+                    else
+                    f"Requested {float(order.quantity):g} shares exceeds broker maximum "
+                    f"{float(broker_max['maximum']):g} ({broker_max['field']})"
+                ),
+                "maximum_quantity": broker_max["maximum"],
+                "broker_field": broker_max["field"],
+            }
+        except Exception as exc:
+            broker_check = {
+                "name": "broker_max_quantity",
+                "passed": False,
+                "message": f"Unable to verify broker maximum tradable quantity: {exc}",
+            }
+
+        result = live_safety.apply_checks(result, [broker_check])
+
     result["order_type"] = order_type
     result["requested_price"] = order.price
+
+    execution_context = trading.current_execution_context(refresh=True)
+    result["execution_context_id"] = execution_context["context_id"]
+
     result["account"] = {
         "mode": account.get("mode"),
         "account_id_masked": account.get("account_id_masked"),
@@ -234,13 +285,34 @@ def execute_order(order: OrderRequest):
 
         mode = trading.mode().upper()
         account = trading.current_account(refresh=True)
+
+        if mode == "LIVE" and order.preview_reference_price not in (None, 0):
+            manual_slippage = live_safety.slippage_check(
+                mode=mode,
+                reference_price=order.preview_reference_price,
+                current_price=preview["estimated_price"],
+            )
+            preview = live_safety.apply_checks(preview, [manual_slippage])
+
+            if not preview["approved"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "LIVE order changed beyond the allowed slippage since preview",
+                        "preview": preview,
+                    },
+                )
+
         result = trading.place_order(
             symbol=preview["symbol"],
             side=preview["side"],
             quantity=preview["quantity"],
             order_type=preview["order_type"],
             price=order.price,
-            remark=f"CEREBRO:MANUAL:{mode}",
+            expected_context_id=preview["execution_context_id"],
+            intent_id=order.execution_intent_id,
+            source="MANUAL",
+            reference_price=preview["estimated_price"],
         )
 
         activity.write(
@@ -258,6 +330,7 @@ def execute_order(order: OrderRequest):
                 "account_id": account.get("account_id"),
                 "security_firm": account.get("security_firm"),
                 "source": "MANUAL",
+                "side": preview.get("side"),
                 "estimated_value": preview.get("estimated_value"),
                 "broker_status": result.get("status"),
                 "risk_checks": preview.get("risk_checks"),

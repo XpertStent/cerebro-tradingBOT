@@ -178,8 +178,13 @@ def install_live_ai_execution(ai_execution):
 
         mode = trading.mode().upper()
         original_price = ((proposal.get("order") or {}).get("estimated_price"))
+
+        from app.services.opend import opend
+        execution_snapshot = opend.get_snapshot(order["symbol"])
+
         safety_checks = [
             live_safety.market_hours_check(mode=mode, symbol=order["symbol"]),
+            live_safety.quote_freshness_check(mode=mode, snapshot=execution_snapshot),
             live_safety.cooldown_check(mode=mode, symbol=order["symbol"], side=order["side"]),
             live_safety.slippage_check(
                 mode=mode,
@@ -211,13 +216,18 @@ def install_live_ai_execution(ai_execution):
             raise RuntimeError("Final account-aware risk check blocked execution: " + "; ".join(failed))
 
         account = trading.current_account(refresh=True)
+        execution_context = validate_execution_context(proposal)
+
         broker = trading.place_order(
             symbol=order["symbol"],
             side=order["side"],
             quantity=order["quantity"],
             order_type=order["order_type"],
             price=order.get("price"),
-            remark=f"CEREBRO:AI:{decision_id}",
+            expected_context_id=execution_context["context_id"],
+            intent_id=f"ai-{decision_id}",
+            source="AI",
+            reference_price=order["estimated_price"],
         )
         # Do not mark the memory record approved before place_order: when LIVE is
         # locked the request must remain retryable/pending. Record EXECUTED only
@@ -252,6 +262,7 @@ def install_live_ai_execution(ai_execution):
                 "security_firm": account.get("security_firm"),
                 "decision_id": decision_id,
                 "source": "AI",
+                "side": order.get("side"),
                 "execution_context": proposal.get("execution_context"),
                 "risk": fresh_risk,
             },

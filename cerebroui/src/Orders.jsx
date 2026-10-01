@@ -118,7 +118,7 @@ export default function Orders() {
     }
     try {
       const r = await fetch(
-        `/api/market/search?q=${encodeURIComponent(q)}&markets=US,HK,SH,SZ,SG,MY,JP&limit=8`,
+        `/api/market/search?q=${encodeURIComponent(q)}&markets=US&limit=8`,
         { cache: "no-store" }
       );
       const d = await r.json();
@@ -136,14 +136,21 @@ export default function Orders() {
     setMessage(null);
   }
 
-  function orderPayload() {
+  function orderPayload({ forExecution = false } = {}) {
     const payload = {
       symbol,
       side,
       quantity: Number(quantity),
       order_type: orderType
     };
+
     if (orderType === "LIMIT") payload.price = Number(limitPrice);
+
+    if (forExecution && preview) {
+      payload.preview_reference_price = Number(preview.estimated_price);
+      payload.execution_intent_id = preview.execution_intent_id;
+    }
+
     return payload;
   }
 
@@ -158,7 +165,14 @@ export default function Orders() {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(detailMessage(d, `Preview failed (${r.status})`));
-      setPreview(d);
+      setPreview({
+        ...d,
+        execution_intent_id:
+          d.execution_intent_id ||
+          (window.crypto?.randomUUID
+            ? window.crypto.randomUUID()
+            : `manual-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      });
       setTrading(previous => ({ ...(previous || {}), mode: d.mode }));
     } catch (e) {
       setPreview(null);
@@ -184,7 +198,7 @@ export default function Orders() {
       const r = await brokerAction("/api/orders/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderPayload())
+        body: JSON.stringify(orderPayload({ forExecution: true }))
       });
       const d = await r.json();
       if (!r.ok) throw new Error(detailMessage(d, `Execution failed (${r.status})`));
