@@ -227,6 +227,24 @@ The Dashboard uses the same account and does not retain the $1M simulated values
 
 The AI never receives direct broker authority. Sizing and final broker execution remain deterministic application code.
 
+### AI proposal execution-context binding
+
+Every AI proposal is now permanently bound to the exact execution context that generated it. Cerebro stores the proposal's PAPER/LIVE environment plus a non-secret execution-context fingerprint derived from environment, security firm and broker account id. The raw broker account id is not exposed to the model for this binding.
+
+Approval re-computes the active execution-context fingerprint before any WATCH mutation or broker execution. Cerebro blocks the approval with `EXECUTION_CONTEXT_MISMATCH` when any of these changed after the run:
+
+- PAPER → LIVE,
+- LIVE → PAPER,
+- LIVE account A → LIVE account B,
+- PAPER account A → another PAPER account,
+- security-firm/account identity changes.
+
+Old pending proposals created before this binding existed are also blocked from approval and must be regenerated. Rejection is still allowed because rejecting cannot submit a broker order or mutate the active account.
+
+The same validation runs again inside the broker execution method so internal callers cannot bypass it. Context mismatches are written to Activity as `AI_EXECUTION_CONTEXT_MISMATCH` security events.
+
+This means changing trading mode or selected account never migrates an existing AI decision into the new account. Run a fresh AI decision cycle after any execution-context change.
+
 ### LIVE AI execution
 
 When `execution.auto_execute` is OFF, AI proposals use the established manual-approval workflow. Approving a BUY/ADD/REDUCE/SELL in LIVE mode submits a REAL order only after fresh checks and trade unlock.
@@ -263,9 +281,10 @@ Activity remains persisted in SQLite and records execution-specific information 
 - order id,
 - broker status,
 - deterministic risk result,
-- final LIVE safety checks and blocked reasons.
+- final LIVE safety checks and blocked reasons,
+- AI proposal execution-context identity and mismatch reason when applicable.
 
-Additional security/broker events include LIVE account selection, successful unlock, failed unlock, explicit lock and locked trade attempts. LIVE AI safety failures are also logged as risk events.
+Additional security/broker events include LIVE account selection, successful unlock, failed unlock, explicit lock, locked trade attempts and AI execution-context mismatches. LIVE AI safety failures are also logged as risk events.
 
 The UI's Activity / Logs page continues to expose event search, category/level filtering and detailed payload expansion.
 
@@ -300,7 +319,8 @@ The LIVE implementation is deliberately conservative:
 - selected account must be REAL, ACTIVE and US-authorized,
 - live unlock is explicit and can be re-locked from the UI,
 - LIVE BUY cooldown is enforced,
-- AI price drift is bounded by the configured slippage limit.
+- AI price drift is bounded by the configured slippage limit,
+- AI proposals cannot cross execution environments or broker accounts after generation.
 
 Broker/account permissions still have final authority. A request passing Cerebro risk can still be refused by Moomoo/OpenD.
 
@@ -319,15 +339,18 @@ Before testing a real order:
 9. Unlock and verify the header shows `Unlocked`.
 10. Open Portfolio and verify the balance/positions match the REAL account rather than the simulated $1M account.
 11. Check `risk.max_order_value`, `risk.max_position_pct`, `risk.max_invested_pct`, `risk.min_cash_reserve_pct`, `risk.max_daily_loss`, `execution.cooldown_minutes` and `execution.max_slippage_pct` before the first live test.
-12. Test during the regular US session; LIVE order preview should show the regular-session safety check passing.
-13. In Orders, preview a deliberately small whole-share order first.
-14. Verify effective order limit, available funds, position %, cash reserve, cooldown and all other checks before considering submission.
-15. Confirm LIVE order history and Activity show the resulting environment/account/order information.
-16. Use the header control to lock trading again after testing.
+12. Run a fresh AI decision cycle after switching to LIVE; do not reuse a pending PAPER decision. Cerebro will reject stale/mismatched proposals anyway.
+13. Test during the regular US session; LIVE order preview should show the regular-session safety check passing.
+14. In Orders, preview a deliberately small whole-share order first.
+15. Verify effective order limit, available funds, position %, cash reserve, cooldown and all other checks before considering submission.
+16. Confirm LIVE order history and Activity show the resulting environment/account/order information.
+17. Use the header control to lock trading again after testing.
 
 ## Returning to PAPER
 
 Change **Trading Mode** back to `paper`. Cerebro clears the live unlock state and resumes using the SIMULATE account for Portfolio, Orders and AI context. No LIVE account balance is used for PAPER sizing.
+
+Any pending LIVE AI proposal remains tied to the LIVE account that generated it and cannot be approved in PAPER. Run a fresh PAPER decision cycle if you want new PAPER proposals.
 
 ## Development note
 
