@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.services.activity import activity
+from app.services.live_safety import live_safety
 from app.services.opend import opend
 from app.services.risk import risk
 from app.services.settings import settings
@@ -149,6 +150,13 @@ def build_preview(order: OrderRequest):
         available_position_qty=float((position or {}).get("available_quantity") or 0),
         realized_pnl=account.get("realized_pnl"),
     )
+
+    mode = trading.mode().upper()
+    safety_checks = [
+        live_safety.market_hours_check(mode=mode, symbol=quote["symbol"]),
+        live_safety.cooldown_check(mode=mode, symbol=quote["symbol"], side=side),
+    ]
+    result = live_safety.apply_checks(result, safety_checks)
     result["order_type"] = order_type
     result["requested_price"] = order.price
     result["account"] = {
@@ -195,6 +203,11 @@ def preview_order(order: OrderRequest):
                 "environment": result["mode"],
                 "estimated_value": result["estimated_value"],
                 "limits": result.get("limits"),
+                "failed_checks": [
+                    check.get("name")
+                    for check in result.get("risk_checks") or []
+                    if not check.get("passed")
+                ],
             },
         )
         return result
@@ -207,6 +220,8 @@ def preview_order(order: OrderRequest):
 @router.post("/execute")
 def execute_order(order: OrderRequest):
     try:
+        # Execution always performs a fresh preview/risk pass. A direct API call
+        # therefore cannot bypass account, session, cooldown or risk validation.
         preview = build_preview(order)
         if not preview["approved"]:
             raise HTTPException(
@@ -245,6 +260,7 @@ def execute_order(order: OrderRequest):
                 "source": "MANUAL",
                 "estimated_value": preview.get("estimated_value"),
                 "broker_status": result.get("status"),
+                "risk_checks": preview.get("risk_checks"),
             },
         )
         activity.write(
