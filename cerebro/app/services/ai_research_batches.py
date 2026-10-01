@@ -47,11 +47,9 @@ BATCH_SCHEMA = {
 class AIResearchBatchService:
     """Research many symbols with a small number of clustered web-search calls.
 
-    The configured parallel batch count means exactly what the operator sees in
-    Settings: with 30 uncached symbols and a value of 4, Cerebro splits the
-    symbols as evenly as possible across four parallel OpenAI research calls.
-    A value of 6 creates six parallel calls. Cached symbols are removed before
-    clustering, so the actual request count can be lower on repeat runs.
+    Valid results are salvaged even when a model returns a malformed clustered
+    response. Only duplicated/omitted symbols are retried in isolated recovery
+    requests, so one bad row can no longer poison an otherwise-good cluster.
     """
 
     @property
@@ -117,6 +115,8 @@ in source_urls. Every high-materiality event should have at least one source
 URL when reliable evidence exists. Keep each company's evidence separate.
 
 Return exactly one result for every supplied symbol and no extra symbols.
+Do not duplicate any symbol in the results array. Copy each supplied ticker
+exactly as provided.
 
 BATCH INPUT:
 {json.dumps(payload, ensure_ascii=False, default=str)}
@@ -124,7 +124,66 @@ BATCH INPUT:
 Return only the requested structured result.
 """.strip()
 
+    def _build_payload(self, research, request, consulted_sources):
+        symbol = str(request["symbol"]).upper()
+        research = dict(research)
+        research["symbol"] = symbol
+
+        quant_context = request.get("quant_context") or {}
+        metrics = quant_context.get("metrics") or {}
+        discontinuity_events = metrics.get("discontinuity_events") or []
+        requires_event_review = bool(
+            metrics.get("requires_event_review") or discontinuity_events
+        )
+        if not requires_event_review:
+            research["price_anomaly_assessment"] = {
+                "classification": "NO_EXTREME_MOVE",
+                "confidence": 1.0,
+                "explanation": (
+                    "Cerebro did not supply an extreme or discontinuous "
+                    "price move requiring event review."
+                ),
+                "source_urls": [],
+            }
+
+        sources, source_id_by_url = ai_web_research._build_source_index(
+            research,
+            consulted_sources,
+        )
+        research = ai_web_research._replace_urls_with_ids(
+            research,
+            source_id_by_url,
+        )
+
+        signature = ai_web_research._signature(
+            symbol=symbol,
+            company_name=request.get("company_name"),
+            quant_context=quant_context,
+            relationships=request.get("relationships") or [],
+        )
+        payload = {
+            "schema_version": RESEARCH_SCHEMA_VERSION,
+            "symbol": symbol,
+            "model": ai_web_research.model,
+            "status": "READY",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "cache": "MISS",
+            "research": research,
+            "sources": sources,
+            "source_count": len(sources),
+            "consulted_source_count": len(consulted_sources),
+            "query_signature": signature,
+        }
+        ai_web_research._save_cache(symbol, payload)
+        return payload
+
     def _research_batch_once(self, requests):
+        """Return valid rows plus unresolved symbols instead of failing a batch.
+
+        Duplicate expected symbols are deliberately not trusted: both copies are
+        discarded and that symbol is queued for isolated recovery. Unexpected
+        symbols are ignored. Unique valid rows are retained immediately.
+        """
         response = ai_web_research._client().responses.create(
             model=ai_web_research.model,
             reasoning={
@@ -149,88 +208,62 @@ Return only the requested structured result.
 
         parsed = json.loads(response.output_text)
         results = parsed.get("results") or []
-        expected = {str(item["symbol"]).upper() for item in requests}
-        seen = set()
-        by_symbol = {}
-        consulted_sources = ai_web_research._extract_consulted_sources(response)
-
         request_map = {
             str(item["symbol"]).upper(): item
             for item in requests
         }
+        expected = set(request_map)
+        consulted_sources = ai_web_research._extract_consulted_sources(response)
 
+        counts = {}
+        unexpected = []
         for research in results:
             symbol = str(research.get("symbol") or "").upper()
-            research["symbol"] = symbol
-            if symbol not in expected:
-                raise RuntimeError(f"Research batch returned unexpected symbol: {symbol}")
-            if symbol in seen:
-                raise RuntimeError(f"Research batch returned duplicate symbol: {symbol}")
-            seen.add(symbol)
+            if symbol in expected:
+                counts[symbol] = counts.get(symbol, 0) + 1
+            elif symbol:
+                unexpected.append(symbol)
 
-            request = request_map[symbol]
-            quant_context = request.get("quant_context") or {}
-            metrics = quant_context.get("metrics") or {}
-            discontinuity_events = metrics.get("discontinuity_events") or []
-            requires_event_review = bool(
-                metrics.get("requires_event_review") or discontinuity_events
-            )
-            if not requires_event_review:
-                research["price_anomaly_assessment"] = {
-                    "classification": "NO_EXTREME_MOVE",
-                    "confidence": 1.0,
-                    "explanation": (
-                        "Cerebro did not supply an extreme or discontinuous "
-                        "price move requiring event review."
-                    ),
-                    "source_urls": [],
-                }
-
-            sources, source_id_by_url = ai_web_research._build_source_index(
+        duplicates = {symbol for symbol, count in counts.items() if count > 1}
+        by_symbol = {}
+        for research in results:
+            symbol = str(research.get("symbol") or "").upper()
+            if symbol not in expected or symbol in duplicates:
+                continue
+            if symbol in by_symbol:
+                continue
+            by_symbol[symbol] = self._build_payload(
                 research,
+                request_map[symbol],
                 consulted_sources,
             )
-            research = ai_web_research._replace_urls_with_ids(
-                research,
-                source_id_by_url,
+
+        unresolved_symbols = sorted(expected - set(by_symbol))
+        issues = []
+        if duplicates:
+            issues.append(
+                "duplicate symbol(s): " + ", ".join(sorted(duplicates))
+            )
+        omitted = sorted(symbol for symbol in unresolved_symbols if symbol not in duplicates)
+        if omitted:
+            issues.append("omitted symbol(s): " + ", ".join(omitted))
+        if unexpected:
+            issues.append(
+                "unexpected symbol(s): " + ", ".join(sorted(set(unexpected)))
             )
 
-            signature = ai_web_research._signature(
-                symbol=symbol,
-                company_name=request.get("company_name"),
-                quant_context=quant_context,
-                relationships=request.get("relationships") or [],
-            )
-            payload = {
-                "schema_version": RESEARCH_SCHEMA_VERSION,
-                "symbol": symbol,
-                "model": ai_web_research.model,
-                "status": "READY",
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
-                "cache": "MISS",
-                "research": research,
-                "sources": sources,
-                "source_count": len(sources),
-                "consulted_source_count": len(consulted_sources),
-                "query_signature": signature,
-            }
-            ai_web_research._save_cache(symbol, payload)
-            by_symbol[symbol] = payload
+        return {
+            "results": by_symbol,
+            "unresolved": [request_map[symbol] for symbol in unresolved_symbols],
+            "issues": issues,
+        }
 
-        missing = sorted(expected - seen)
-        if missing:
-            raise RuntimeError(
-                "Research batch omitted symbol(s): " + ", ".join(missing)
-            )
-        return by_symbol
-
-    def _research_batch_with_retry(self, batch, batch_number, progress_callback=None):
+    def _request_with_retry(self, requests, batch_number, progress_callback=None, recovery=False):
         max_attempts = 4
-        symbols = [str(item["symbol"]).upper() for item in batch]
-
+        symbols = [str(item["symbol"]).upper() for item in requests]
         for attempt in range(1, max_attempts + 1):
             try:
-                return self._research_batch_once(batch)
+                return self._research_batch_once(requests)
             except Exception as exc:
                 if attempt >= max_attempts or not is_retryable_openai_error(exc):
                     raise
@@ -256,11 +289,115 @@ Return only the requested structured result.
                             if provider_delay is not None else None
                         ),
                         retry_source=retry_source,
+                        recovery=recovery,
                         error=str(exc),
                     )
                 time.sleep(delay)
+        raise RuntimeError("Research request retry loop exhausted")
 
-        raise RuntimeError("Research batch retry loop exhausted")
+    def _recover_one(self, request, batch_number, progress_callback=None, prior_issue=None):
+        symbol = str(request["symbol"]).upper()
+        consistency_attempts = 2
+        last_issue = prior_issue or "clustered response was incomplete"
+
+        for recovery_attempt in range(1, consistency_attempts + 1):
+            if progress_callback:
+                progress_callback(
+                    stage="RESEARCH_RECOVERY",
+                    current_symbol=symbol,
+                    status="RECOVERING",
+                    batch_number=batch_number,
+                    batch_symbols=[symbol],
+                    recovery_attempt=recovery_attempt,
+                    recovery_max_attempts=consistency_attempts,
+                    error=last_issue,
+                )
+            try:
+                packet = self._request_with_retry(
+                    [request],
+                    batch_number,
+                    progress_callback,
+                    recovery=True,
+                )
+            except Exception as exc:
+                last_issue = str(exc)
+                continue
+
+            result = packet.get("results") or {}
+            if symbol in result:
+                return result[symbol]
+            last_issue = "; ".join(packet.get("issues") or []) or (
+                f"isolated research response still omitted {symbol}"
+            )
+
+        return {
+            "symbol": symbol,
+            "status": "ERROR",
+            "error": (
+                "Research model output remained inconsistent after isolated "
+                f"recovery for {symbol}: {last_issue}"
+            ),
+            "research": None,
+            "sources": [],
+            "source_count": 0,
+            "consulted_source_count": 0,
+        }
+
+    def _research_batch_with_retry(self, batch, batch_number, progress_callback=None):
+        symbols = [str(item["symbol"]).upper() for item in batch]
+        resolved = {}
+        unresolved = list(batch)
+        cluster_issue = None
+
+        try:
+            packet = self._request_with_retry(
+                batch,
+                batch_number,
+                progress_callback,
+            )
+            resolved.update(packet.get("results") or {})
+            unresolved = packet.get("unresolved") or []
+            cluster_issue = "; ".join(packet.get("issues") or []) or None
+        except Exception as exc:
+            # A cluster-level API failure should not waste every symbol. Fall
+            # back to isolated recovery so successful symbols can still proceed.
+            cluster_issue = str(exc)
+            unresolved = list(batch)
+
+        if unresolved and progress_callback:
+            progress_callback(
+                stage="RESEARCH_RECOVERY",
+                current_symbol=None,
+                status="STARTING",
+                batch_number=batch_number,
+                batch_symbols=[str(item["symbol"]).upper() for item in unresolved],
+                error=cluster_issue,
+            )
+
+        for request in unresolved:
+            symbol = str(request["symbol"]).upper()
+            resolved[symbol] = self._recover_one(
+                request,
+                batch_number,
+                progress_callback,
+                prior_issue=cluster_issue,
+            )
+
+        # Defensive guarantee: every requested symbol exits this worker with a
+        # READY or ERROR payload, never silently disappears.
+        for request in batch:
+            symbol = str(request["symbol"]).upper()
+            if symbol not in resolved:
+                resolved[symbol] = {
+                    "symbol": symbol,
+                    "status": "ERROR",
+                    "error": f"Research recovery produced no result for {symbol}",
+                    "research": None,
+                    "sources": [],
+                    "source_count": 0,
+                    "consulted_source_count": 0,
+                }
+        return resolved
 
     def research_many(self, requests, progress_callback=None):
         requests = [item for item in requests if item.get("symbol")]
@@ -335,26 +472,11 @@ Return only the requested structured result.
                 symbols = [str(item["symbol"]).upper() for item in batch]
                 try:
                     batch_output = future.result()
-                    output.update(batch_output)
-                    for symbol in symbols:
-                        complete += 1
-                        if progress_callback:
-                            progress_callback(
-                                stage="RESEARCH",
-                                current_symbol=symbol,
-                                status=(output.get(symbol) or {}).get("status") or "READY",
-                                cache=(output.get(symbol) or {}).get("cache"),
-                                batch_number=batch_number,
-                                batch_symbols=symbols,
-                                total=total,
-                                complete=complete,
-                                ready=sum(1 for value in output.values() if value.get("status") == "READY"),
-                                errors=sum(1 for value in output.values() if value.get("status") == "ERROR"),
-                                in_flight=max(0, len(futures) - sum(1 for f in futures if f.done())),
-                            )
                 except Exception as exc:
-                    for symbol in symbols:
-                        output[symbol] = {
+                    # Last-resort guard. Normally _research_batch_with_retry
+                    # returns per-symbol errors rather than throwing.
+                    batch_output = {
+                        symbol: {
                             "symbol": symbol,
                             "status": "ERROR",
                             "error": str(exc),
@@ -363,21 +485,28 @@ Return only the requested structured result.
                             "source_count": 0,
                             "consulted_source_count": 0,
                         }
-                        complete += 1
-                        if progress_callback:
-                            progress_callback(
-                                stage="RESEARCH",
-                                current_symbol=symbol,
-                                status="ERROR",
-                                error=str(exc),
-                                batch_number=batch_number,
-                                batch_symbols=symbols,
-                                total=total,
-                                complete=complete,
-                                ready=sum(1 for value in output.values() if value.get("status") == "READY"),
-                                errors=sum(1 for value in output.values() if value.get("status") == "ERROR"),
-                                in_flight=max(0, len(futures) - sum(1 for f in futures if f.done())),
-                            )
+                        for symbol in symbols
+                    }
+
+                output.update(batch_output)
+                for symbol in symbols:
+                    complete += 1
+                    status = (output.get(symbol) or {}).get("status") or "ERROR"
+                    if progress_callback:
+                        progress_callback(
+                            stage="RESEARCH",
+                            current_symbol=symbol,
+                            status=status,
+                            cache=(output.get(symbol) or {}).get("cache"),
+                            error=(output.get(symbol) or {}).get("error"),
+                            batch_number=batch_number,
+                            batch_symbols=symbols,
+                            total=total,
+                            complete=complete,
+                            ready=sum(1 for value in output.values() if value.get("status") == "READY"),
+                            errors=sum(1 for value in output.values() if value.get("status") == "ERROR"),
+                            in_flight=max(0, len(futures) - sum(1 for f in futures if f.done())),
+                        )
 
         if progress_callback:
             progress_callback(
