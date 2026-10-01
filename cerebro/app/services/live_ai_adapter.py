@@ -4,6 +4,7 @@ from types import MethodType
 from app.services.activity import activity
 from app.services.ai_memory import ai_memory
 from app.services.ai_thesis_store import ai_theses
+from app.services.live_safety import live_safety
 from app.services.risk import risk
 from app.services.settings import settings
 from app.services.trading import trading
@@ -41,10 +42,9 @@ def install_live_ai_execution(ai_execution):
         decision_id = proposal.get("decision_id")
         order, _ = self._fresh_execution_order(proposal)
 
-        # The mature execution service already refreshes price/account state and
-        # performs risk checks. Re-run the expanded LIVE-aware guard here with
-        # the full broker account fields (including available funds, sellable
-        # quantity and broker-reported realized P&L) immediately before submit.
+        # Re-read the real/current account immediately before submission and run
+        # every account-aware deterministic check again. This deliberately uses
+        # the selected execution environment rather than any PAPER-era balance.
         account_summary = trading.get_account_summary(refresh=True)
         positions = trading.get_positions(refresh=True)
         position = next(
@@ -75,16 +75,42 @@ def install_live_ai_execution(ai_execution):
             median_turnover_60d=proposal.get("median_turnover_60d"),
             realized_pnl=account_summary.get("realized_pnl"),
         )
+
+        mode = trading.mode().upper()
+        original_price = ((proposal.get("order") or {}).get("estimated_price"))
+        safety_checks = [
+            live_safety.market_hours_check(mode=mode, symbol=order["symbol"]),
+            live_safety.cooldown_check(mode=mode, symbol=order["symbol"], side=order["side"]),
+            live_safety.slippage_check(
+                mode=mode,
+                reference_price=original_price,
+                current_price=order["estimated_price"],
+            ),
+        ]
+        fresh_risk = live_safety.apply_checks(fresh_risk, safety_checks)
+
         if not fresh_risk.get("approved"):
             failed = [
                 check.get("message")
                 for check in fresh_risk.get("risk_checks") or []
                 if not check.get("passed")
             ]
+            activity.write(
+                category="RISK",
+                action="AI_EXECUTION_BLOCKED",
+                message=f"Final {mode} AI execution blocked for {order['symbol']}",
+                level="WARN",
+                symbol=order["symbol"],
+                details={
+                    "environment": mode,
+                    "decision_id": decision_id,
+                    "failed_checks": failed,
+                    "risk": fresh_risk,
+                },
+            )
             raise RuntimeError("Final account-aware risk check blocked execution: " + "; ".join(failed))
 
         ai_memory.set_execution_result(decision_id, status="APPROVED")
-        mode = trading.mode().upper()
         account = trading.current_account(refresh=True)
         broker = trading.place_order(
             symbol=order["symbol"],
