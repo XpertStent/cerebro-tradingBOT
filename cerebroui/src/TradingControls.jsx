@@ -54,15 +54,19 @@ export default function TradingControls({ onStatus }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || `Trading status failed (${response.status})`);
 
+      let normalized = data;
       if (refresh) {
         setAccounts(data.accounts || []);
         const accountId = data.selected_account?.account_id;
         setSelected(String(accountId || (data.accounts?.length === 1 ? data.accounts[0].account_id : "")));
-        setStatus(previous => ({ ...(previous || {}), ...data, account: data.selected_account }));
-      } else {
-        setStatus(data);
+        normalized = {
+          ...data,
+          account: data.selected_account || null,
+          available_live_accounts: data.accounts || [],
+        };
       }
-      onStatus?.(data);
+      setStatus(previous => ({ ...(previous || {}), ...normalized }));
+      onStatus?.(normalized);
     } catch (error) {
       setMessage({ kind: "error", text: error.message });
     }
@@ -86,6 +90,7 @@ export default function TradingControls({ onStatus }) {
 
   const live = String(status?.mode || "").toUpperCase() === "LIVE";
   const unlocked = Boolean(status?.unlocked);
+  const unlockConfigured = status?.unlock_hash_configured !== false;
 
   async function selectAccount() {
     if (!selected) throw new Error("Select the REAL account Cerebro should use.");
@@ -96,12 +101,19 @@ export default function TradingControls({ onStatus }) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "Unable to select LIVE account");
+    if (data.status) {
+      setStatus(previous => ({ ...(previous || {}), ...data.status }));
+      onStatus?.(data.status);
+    }
   }
 
   async function unlock() {
     setBusy(true);
     setMessage(null);
     try {
+      if (!unlockConfigured) {
+        throw new Error("MOOMOO_TRADING_PASSWORD_MD5 is not configured on the Cerebro container.");
+      }
       await selectAccount();
       const response = await nativeFetch("/api/trading/unlock", {
         method: "POST",
@@ -184,6 +196,12 @@ export default function TradingControls({ onStatus }) {
               <span>No trading credential is collected by the browser. Cerebro uses MOOMOO_TRADING_PASSWORD_MD5 from the backend container environment.</span>
             </div>
 
+            {!unlockConfigured && (
+              <div className="unlockStatus error">
+                LIVE unlock is not configured. Add MOOMOO_TRADING_PASSWORD_MD5 to the Cerebro service in Portainer and redeploy the stack.
+              </div>
+            )}
+
             <label className="unlockField">
               <span>REAL trading account</span>
               <select value={selected} onChange={event => setSelected(event.target.value)}>
@@ -202,7 +220,7 @@ export default function TradingControls({ onStatus }) {
             <div className="unlockActions">
               <button className="unlockCancel" onClick={() => load(true)} disabled={busy}><RefreshCw size={15}/>Refresh accounts</button>
               <button className="unlockCancel" onClick={closeModal} disabled={busy}>Cancel</button>
-              <button className="unlockConfirm" onClick={unlock} disabled={busy || !selected}>
+              <button className="unlockConfirm" onClick={unlock} disabled={busy || !selected || !unlockConfigured}>
                 <Unlock size={16}/>{busy ? "Unlocking…" : pending ? "Unlock & Continue" : "Unlock Trading"}
               </button>
             </div>
