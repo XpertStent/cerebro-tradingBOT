@@ -10,7 +10,7 @@ from app.services.trading import trading
 
 
 ACTIONABLE = {"BUY", "ADD", "REDUCE", "SELL"}
-NON_ACTIONABLE = {"HOLD", "WATCH"}
+NON_ACTIONABLE = {"HOLD", "WATCH", "IGNORE"}
 TERMINAL_ORDER_STATES = {
     "FILLED_ALL",
     "CANCELLED_ALL",
