@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services.activity import activity
+from app.services.live_credentials import configured_unlock_hash
 from app.services.trading import trading
 
 
@@ -9,7 +10,6 @@ router = APIRouter(prefix="/trading", tags=["Trading"])
 
 
 class UnlockRequest(BaseModel):
-    password: str | None = None
     password_md5: str | None = None
 
 
@@ -32,6 +32,7 @@ def trading_accounts():
             "accounts": status.get("available_live_accounts") or [],
             "unlocked": status.get("unlocked"),
             "ready": status.get("ready"),
+            "unlock_hash_configured": bool(configured_unlock_hash()),
             "error": status.get("error"),
         }
     except Exception as exc:
@@ -52,12 +53,14 @@ def select_account(payload: SelectAccountRequest):
 
 
 @router.post("/unlock")
-def unlock_trade(payload: UnlockRequest):
+def unlock_trade(payload: UnlockRequest | None = None):
     try:
-        result = trading.unlock_trade(
-            password=payload.password,
-            password_md5=payload.password_md5,
-        )
+        password_md5 = (payload.password_md5 if payload else None) or configured_unlock_hash()
+        if not password_md5:
+            raise ValueError(
+                "No server-side live unlock hash is configured. Set MOOMOO_TRADING_PASSWORD_MD5 on the Cerebro container and redeploy."
+            )
+        result = trading.unlock_trade(password_md5=password_md5)
         return {
             **result,
             "status": trading.trading_status(refresh=True),
