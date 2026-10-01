@@ -74,10 +74,11 @@ def market_snapshots(
 def market_candles(
     symbol: str,
     timeframe: str = Query("1d", description="Supported: 1m, 5m, 15m, 30m, 60m, 1d, 1w"),
-    count: int = Query(100, ge=1, le=1000)
+    count: int = Query(100, ge=1, le=1000),
+    before: str | None = Query(None, description="Exclusive candle time in the market timezone")
 ):
     try:
-        return opend.get_candles(symbol=symbol, timeframe=timeframe, count=count)
+        return opend.get_candles(symbol=symbol, timeframe=timeframe, count=count, before=before)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

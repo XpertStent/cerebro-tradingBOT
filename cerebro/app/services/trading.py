@@ -14,6 +14,7 @@ from moomoo import (
     TrdSide,
 )
 
+from app.services.broker_identity import broker_id, masked_id
 from app.services.account_fields import number
 from app.services.activity import activity
 from app.services.settings import settings
@@ -164,7 +165,7 @@ class TradingClient:
             for _, row in data.iterrows():
                 environment = self._enum_text(row.get("trd_env"))
                 account = {
-                    "account_id": self._clean(row.get("acc_id")),
+                    "account_id": broker_id(row.get("acc_id")),
                     "environment": environment,
                     "account_type": self._enum_text(row.get("acc_type")),
                     "simulation_type": self._enum_text(row.get("sim_acc_type")),
@@ -175,8 +176,10 @@ class TradingClient:
                         if environment == "REAL"
                         else firm_name
                     ),
-                    "universal_account": self._clean(row.get("uni_card_num")),
-                    "trading_account": self._clean(row.get("card_num")),
+                    "universal_account": broker_id(row.get("uni_card_num")),
+                    "universal_account_masked": masked_id(row.get("uni_card_num")),
+                    "trading_account": broker_id(row.get("card_num")),
+                    "trading_account_masked": masked_id(row.get("card_num")),
                 }
                 accounts.append(account)
             return accounts
@@ -372,7 +375,7 @@ class TradingClient:
         try:
             ret, data = ctx.accinfo_query(
                 trd_env=self.environment(),
-                acc_id=account_id,
+                acc_id=int(account_id),
             )
             if ret != RET_OK:
                 raise RuntimeError(str(data))
@@ -412,7 +415,7 @@ class TradingClient:
         try:
             ret, data = ctx.position_list_query(
                 trd_env=self.environment(),
-                acc_id=account_id,
+                acc_id=int(account_id),
                 refresh_cache=True,
             )
             if ret != RET_OK:
@@ -450,7 +453,7 @@ class TradingClient:
         try:
             ret, data = ctx.order_list_query(
                 trd_env=self.environment(),
-                acc_id=account_id,
+                acc_id=int(account_id),
                 refresh_cache=True,
             )
             if ret != RET_OK:
@@ -459,7 +462,7 @@ class TradingClient:
             for _, row in data.iterrows():
                 orders.append(
                     {
-                        "order_id": self._clean(row.get("order_id")),
+                        "order_id": broker_id(row.get("order_id")),
                         "symbol": self._clean(row.get("code")),
                         "name": self._clean(row.get("stock_name")),
                         "side": self._enum_text(row.get("trd_side")),
@@ -591,7 +594,7 @@ class TradingClient:
                 "trd_side": TrdSide.BUY if side == "BUY" else TrdSide.SELL,
                 "order_type": OrderType.MARKET if order_type == "MARKET" else OrderType.NORMAL,
                 "trd_env": self.environment(),
-                "acc_id": account_id,
+                "acc_id": int(account_id),
                 "price": 0 if order_type == "MARKET" else price,
             }
             if remark:
@@ -603,7 +606,7 @@ class TradingClient:
                 raise RuntimeError("OpenD returned no order data")
             row = data.iloc[0]
             result = {
-                "order_id": self._clean(row.get("order_id")),
+                "order_id": broker_id(row.get("order_id")),
                 "symbol": self._clean(row.get("code")),
                 "name": self._clean(row.get("stock_name")),
                 "side": self._enum_text(row.get("trd_side")),
@@ -651,7 +654,7 @@ class TradingClient:
                 qty=0,
                 price=0,
                 trd_env=self.environment(),
-                acc_id=account["account_id"],
+                acc_id=int(account["account_id"]),
             )
             if ret != RET_OK:
                 self._handle_broker_error(data)

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.services.live_trading_hardening import EXECUTION_LOCK
 from app.services.activity import activity
 from app.services.live_safety import live_safety
 from app.services.opend import opend
@@ -46,14 +47,16 @@ def _unlock_http(exc: Exception):
 
 
 @router.get("/")
-def orders():
+def orders(refresh: bool = Query(False)):
     try:
-        data = trading.get_orders()
-        return {
-            "count": len(data),
-            "mode": trading.mode().upper(),
-            "orders": data,
-        }
+        with EXECUTION_LOCK:
+            data = trading.get_orders(refresh_history=refresh)
+            return {
+                "count": len(data),
+                "mode": trading.mode().upper(),
+                "orders": data,
+                "history": trading._order_history_status,
+            }
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

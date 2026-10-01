@@ -88,7 +88,8 @@ export default function Portfolio() {
       >
         {account && (
           <div className="previewAccountGrid">
-            <div className="previewAccountCard"><span>Account</span><strong>{account.account_id_masked || `••••${String(account.account_id || "").slice(-4)}`}</strong></div>
+            <div className="previewAccountCard"><span>OpenD trading ID</span><strong>{account.account_id_masked || `••••${String(account.account_id || "").slice(-4)}`}</strong></div>
+            <div className="previewAccountCard"><span>Moomoo app account</span><strong>{account.universal_account_masked || "—"}</strong></div>
             <div className="previewAccountCard"><span>Broker</span><strong>{account.security_firm || "—"}</strong></div>
             <div className="previewAccountCard"><span>Available funds (USD, cash-only)</span><strong>{money(account.available_cash)}</strong></div>
           </div>
@@ -133,14 +134,14 @@ export default function Portfolio() {
           <table className="positionsTable">
             <thead>
               <tr>
-                <th>Security</th><th>Qty</th><th>Available</th><th>Avg Cost</th><th>Current</th><th>Market Value</th><th>P&L</th><th>P&L %</th><th>Action</th>
+                <th>Security</th><th>Qty</th><th>Available</th><th>Avg Cost</th><th>Current</th><th>Market Value</th><th title="Position market value divided by total account value, including cash">Portfolio %</th><th>P&L</th><th>P&L %</th><th>Action</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="9" className="positionsEmpty">Loading portfolio…</td></tr>
+                <tr><td colSpan="10" className="positionsEmpty">Loading portfolio…</td></tr>
               ) : positions.length === 0 ? (
-                <tr><td colSpan="9" className="positionsEmpty">No open positions</td></tr>
+                <tr><td colSpan="10" className="positionsEmpty">No open positions</td></tr>
               ) : (
                 positions.map(position => (
                   <tr key={position.symbol}>
@@ -150,6 +151,7 @@ export default function Portfolio() {
                     <td>{money(position.average_cost)}</td>
                     <td>{money(position.current_price)}</td>
                     <td>{money(position.market_value)}</td>
+                    <td>{percent(account?.total_value > 0 && position.market_value != null ? 100 * position.market_value / account.total_value : null)}</td>
                     <td className={position.profit_loss > 0 ? "positive" : position.profit_loss < 0 ? "negative" : ""}>{money(position.profit_loss)}</td>
                     <td className={position.profit_loss_percent > 0 ? "positive" : position.profit_loss_percent < 0 ? "negative" : ""}>{percent(position.profit_loss_percent)}</td>
                     <td>

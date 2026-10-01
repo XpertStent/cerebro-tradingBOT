@@ -41,6 +41,21 @@ class CandleTests(unittest.TestCase):
         self.assertIn('start', ctx.request_history_kline.call_args.kwargs)
         ctx.close.assert_called_once()
 
+    def test_before_filters_same_day_before_selecting_latest(self):
+        rows = [self.row(f'2026-09-30 {hour}:30:00', int(hour)) for hour in ['09','10','11','12','13']]
+        load, ctx = self.client([(0, Frame(rows[:2]), b'next'), (0, Frame(rows[2:]), None)])
+        result = load(symbol='US.MU', timeframe='60m', count=2, before='2026-09-30 12:30:00')
+        self.assertEqual([c['time'] for c in result['candles']], ['2026-09-30 10:30:00','2026-09-30 11:30:00'])
+        self.assertEqual(ctx.request_history_kline.call_args.kwargs['end'], '2026-09-30')
+
+    def test_empty_earlier_page_and_invalid_cursor(self):
+        load, _ = self.client([(0, Frame([]), None)])
+        result = load(symbol='US.MU', timeframe='1d', before='2026-01-01 00:00:00')
+        self.assertFalse(result['has_more'])
+        load, ctx = self.client([])
+        with self.assertRaises(ValueError): load(symbol='US.MU', before='not-a-date')
+        ctx.request_history_kline.assert_not_called()
+
     def test_failed_next_page_is_not_old_chart(self):
         load, ctx = self.client([(0, Frame([self.row('2026-01-02 09:30:00', 189.57)]), b'next'), (1, 'failed', None)])
         with self.assertRaisesRegex(RuntimeError, 'failed'): load(symbol='US.MU', timeframe='1m')

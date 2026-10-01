@@ -232,7 +232,8 @@ class OpenDClient:
         count: int = 100,
         start: str = None,
         end: str = None,
-        adjustment: str = "none"
+        adjustment: str = "none",
+        before: str = None
     ):
 
         symbol = self.normalize_symbol(symbol)
@@ -243,6 +244,9 @@ class OpenDClient:
                 f"Unsupported timeframe '{timeframe}'. "
                 f"Supported: {', '.join(self.TIMEFRAMES)}"
             )
+
+        if before:
+            before = datetime.fromisoformat(before).strftime("%Y-%m-%d %H:%M:%S")
 
         ctx = self._context()
 
@@ -280,7 +284,7 @@ class OpenDClient:
                 lookback_days = max(7, math.ceil(count * minutes[timeframe] / 390 * 2) + 7)
             else:
                 lookback_days = count * (14 if timeframe == "1w" else 2) + 14
-            kwargs["end"] = end or now.strftime("%Y-%m-%d")
+            kwargs["end"] = end or (before[:10] if before else now.strftime("%Y-%m-%d"))
             end_date = datetime.strptime(kwargs["end"][:10], "%Y-%m-%d")
             kwargs["start"] = start or (end_date - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
 
@@ -309,7 +313,8 @@ class OpenDClient:
 
             candles = []
 
-            for time_key in sorted(rows)[-count:]:
+            eligible_times = [key for key in sorted(rows) if not before or key < before]
+            for time_key in eligible_times[-count:]:
                 row = rows[time_key]
                 candle_time = datetime.fromisoformat(time_key).replace(tzinfo=ZoneInfo(market_timezone))
                 candles.append({
@@ -333,6 +338,9 @@ class OpenDClient:
                 "start": kwargs["start"],
                 "end": kwargs["end"],
                 "latest_candle_time": candles[-1]["time"] if candles else None,
+                "before": before,
+                "oldest_candle_time": candles[0]["time"] if candles else None,
+                "has_more": bool(candles),
                 "candles": candles
             }
 

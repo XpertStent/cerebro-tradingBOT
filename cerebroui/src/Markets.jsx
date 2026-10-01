@@ -1,3 +1,4 @@
+import { mergeCandles, prependedCount } from "./candleData";
 import React, {
   useEffect,
   useRef,
@@ -205,6 +206,10 @@ export default function Markets() {
 
 
   const chartRequestId = useRef(0);
+  const chartGeneration = useRef(0);
+  const olderRequest = useRef(null);
+  const historyEnded = useRef(false);
+  const [historyStatus, setHistoryStatus] = useState("");
   const [followLatest, setFollowLatest] = useState(true);
   const [latestJump, setLatestJump] = useState(0);
   const [chartInfo, setChartInfo] = useState(null);
@@ -251,7 +256,7 @@ export default function Markets() {
       if (requestId !== chartRequestId.current) return;
       if (c.symbol !== target || c.timeframe !== timeframe) throw new Error("Chart response does not match the selected security and interval");
       setQuote(q);
-      setCandles(c.candles || []);
+      setCandles(previous => quiet ? mergeCandles(previous, c.candles || []) : (c.candles || []));
       setChartInfo(c);
 
     } catch (e) {
@@ -392,23 +397,51 @@ export default function Markets() {
   }, []);
 
 
-  useEffect(() => {
+  async function loadOlder() {
+    if (!symbol || !candles.length || olderRequest.current || historyEnded.current) return;
+    const generation = chartGeneration.current;
+    const token = {};
+    olderRequest.current = token;
+    setHistoryStatus("Loading earlier candles…");
+    try {
+      const response = await fetch(`/api/market/${encodeURIComponent(symbol)}/candles?timeframe=${timeframe}&count=250&before=${encodeURIComponent(candles[0].time)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Earlier candles unavailable from OpenD. Scroll again to retry.");
+      const data = await response.json();
+      if (generation !== chartGeneration.current) return;
+      if (data.symbol !== symbol || data.timeframe !== timeframe) throw new Error("Earlier chart response does not match the selected security");
+      const earlier = (data.candles || []).filter(candle => candle.time < candles[0].time);
+      historyEnded.current = earlier.length === 0;
+      setCandles(previous => mergeCandles(previous, earlier));
+      setHistoryStatus(earlier.length ? "" : "No earlier candles returned by OpenD for this range.");
+    } catch (failure) {
+      if (generation === chartGeneration.current) setHistoryStatus(failure.message);
+    } finally {
+      if (olderRequest.current === token) olderRequest.current = null;
+    }
+  }
 
-    if (!symbol) return;
+  useEffect(() => {
+    ++chartGeneration.current;
+    historyEnded.current = false;
+    olderRequest.current = null;
+    setHistoryStatus("");
+    setChartInfo(null);
+    setCandles([]);
+    setFollowLatest(true);
+    if (symbol) loadSymbol(symbol);
+    return () => { ++chartGeneration.current; ++chartRequestId.current; };
+  }, [symbol, timeframe]);
+
+  useEffect(() => {
+    if (!symbol || !followLatest) return;
     let cancelled = false;
     let timer;
-    setChartInfo(null);
-    const refresh = async (quiet = false) => {
-      await loadSymbol(symbol, quiet);
-      if (!cancelled && followLatest) timer = setTimeout(() => refresh(true), 30000);
+    const refresh = async () => {
+      await loadSymbol(symbol, true);
+      if (!cancelled) timer = setTimeout(refresh, 30000);
     };
-    refresh();
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      ++chartRequestId.current;
-    };
-
+    timer = setTimeout(refresh, 30000);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [symbol, timeframe, followLatest]);
 
 
@@ -829,17 +862,15 @@ export default function Markets() {
             </div>
 
 
-            {error ? (
-
-              <div className="chartError">
-                {error}
-              </div>
-
-            ) : (
+            {error && <div className="chartError">{error}</div>}
+            {historyStatus && <p role="status">{historyStatus}</p>}
+            {(
 
               <PriceChart
                 key={`${symbol}:${timeframe}`}
                 candles={candles}
+                onLoadOlder={loadOlder}
+                onBrowseHistory={() => setFollowLatest(false)}
                 followLatest={followLatest}
                 latestJump={latestJump}
                 timeframe={timeframe}
@@ -973,201 +1004,71 @@ export default function Markets() {
 }
 
 
-function PriceChart({
-  candles,
-  followLatest,
-  latestJump,
-  timeframe,
-  chartType,
-  showVolume
-}) {
-
-  const containerRef =
-    useRef(null);
-
-
+function PriceChart({ candles, followLatest, latestJump, timeframe, chartType, showVolume, onLoadOlder, onBrowseHistory }) {
+  const containerRef = useRef(null);
+  const chartRef = useRef(null);
+  const previousData = useRef([]);
   const savedRange = useRef(null);
+  const latestProps = useRef({});
+  latestProps.current = { onLoadOlder, candles, followLatest };
 
   useEffect(() => {
-
-    if (
-      !containerRef.current ||
-      !candles.length
-    )
-      return;
-
-
-    const chart = createChart(
-      containerRef.current,
-      {
-        autoSize: true,
-
-        layout: {
-          background: {
-            color: "#ffffff"
-          },
-
-          textColor: "#64748b"
-        },
-
-        localization: {
-          timeFormatter: time => typeof time === "number"
-            ? new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
-            : `${time.year}-${time.month}-${time.day}`
-        },
-        grid: {
-          vertLines: {
-            color: "#f1f5f9"
-          },
-
-          horzLines: {
-            color: "#f1f5f9"
-          }
-        },
-
-        rightPriceScale: {
-          borderColor: "#e2e8f0"
-        },
-
-        timeScale: {
-          borderColor: "#e2e8f0",
-          tickMarkFormatter: time => typeof time === "number"
-            ? new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
-            : `${time.year}-${time.month}-${time.day}`,
-          timeVisible:
-            !["1d", "1w"].includes(
-              timeframe
-            )
-        }
-      }
-    );
-
-
-    const priceData =
-      candles.map(c => ({
-        time: chartTime(
-          c.time,
-          timeframe,
-          c.timestamp
-        ),
-        open: Number(c.open),
-        high: Number(c.high),
-        low: Number(c.low),
-        close: Number(c.close)
-      }));
-
-
-    if (chartType === "candles") {
-
-      const series =
-        chart.addSeries(
-          CandlestickSeries,
-          {}
-        );
-
-      series.setData(
-        priceData
-      );
-
-    } else {
-
-      const series =
-        chart.addSeries(
-          LineSeries,
-          {
-            lineWidth: 2
-          }
-        );
-
-      series.setData(
-        candles.map(c => ({
-          time: chartTime(
-            c.time,
-            timeframe,
-            c.timestamp
-          ),
-          value: Number(
-            c.close
-          )
-        }))
-      );
-    }
-
-
-    if (showVolume) {
-
-      const volumeSeries =
-        chart.addSeries(
-          HistogramSeries,
-          {
-            priceFormat: {
-              type: "volume"
-            },
-
-            priceScaleId: ""
-          }
-        );
-
-
-      volumeSeries
-        .priceScale()
-        .applyOptions({
-          scaleMargins: {
-            top: 0.78,
-            bottom: 0
-          }
-        });
-
-
-      volumeSeries.setData(
-
-        candles.map(c => ({
-
-          time: chartTime(
-            c.time,
-            timeframe,
-            c.timestamp
-          ),
-
-          value: Number(
-            c.volume || 0
-          )
-
-        }))
-
-      );
-    }
-
-
-    if (!followLatest && savedRange.current) {
-      chart.timeScale().setVisibleLogicalRange(savedRange.current);
-    } else {
-      chart.timeScale().fitContent();
-      if (followLatest) chart.timeScale().scrollToRealTime();
-    }
-
-
+    const chart = createChart(containerRef.current, {
+      autoSize: true,
+      layout: { background: { color: "#ffffff" }, textColor: "#64748b" },
+      grid: { vertLines: { color: "#f1f5f9" }, horzLines: { color: "#f1f5f9" } },
+      rightPriceScale: { borderColor: "#e2e8f0" },
+      localization: { timeFormatter: time => typeof time === "number"
+        ? new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
+        : `${time.year}-${time.month}-${time.day}` },
+      timeScale: { borderColor: "#e2e8f0", timeVisible: !["1d", "1w"].includes(timeframe),
+        tickMarkFormatter: time => typeof time === "number"
+          ? new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
+          : `${time.year}-${time.month}-${time.day}` }
+    });
+    const price = chart.addSeries(chartType === "candles" ? CandlestickSeries : LineSeries, chartType === "line" ? { lineWidth: 2 } : {});
+    const volume = showVolume ? chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "" }) : null;
+    volume?.priceScale().applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+    const state = { chart, price, volume, updating: false };
+    chartRef.current = state;
+    const rangeChanged = range => {
+      if (!state.updating && range && range.from < 30 && latestProps.current.candles.length && !latestProps.current.followLatest) latestProps.current.onLoadOlder();
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(rangeChanged);
+    previousData.current = [];
     return () => {
       savedRange.current = chart.timeScale().getVisibleLogicalRange();
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(rangeChanged);
+      chartRef.current = null;
       chart.remove();
     };
+  }, [timeframe, chartType, showVolume]);
 
-  }, [
-    candles,
-    followLatest,
-    latestJump,
-    timeframe,
-    chartType,
-    showVolume
-  ]);
+  useEffect(() => {
+    const state = chartRef.current;
+    if (!state || !candles.length) return;
+    const { chart, price, volume } = state;
+    const previous = previousData.current;
+    const range = chart.timeScale().getVisibleLogicalRange() || savedRange.current;
+    const added = prependedCount(previous, candles);
+    state.updating = true;
+    const time = candle => chartTime(candle.time, timeframe, candle.timestamp);
+    price.setData(candles.map(c => chartType === "candles"
+      ? { time: time(c), open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close) }
+      : { time: time(c), value: Number(c.close) }));
+    volume?.setData(candles.map(c => ({ time: time(c), value: Number(c.volume || 0) })));
+    if (!followLatest && range) {
+      chart.timeScale().setVisibleLogicalRange({ from: range.from + added, to: range.to + added });
+    } else if (!previous.length) {
+      chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 100), to: candles.length + 3 });
+    } else if (followLatest) {
+      chart.timeScale().scrollToRealTime();
+    }
+    previousData.current = candles;
+    state.updating = false;
+  }, [candles, timeframe, chartType, showVolume, followLatest, latestJump]);
 
-
-  return (
-    <div
-      ref={containerRef}
-      className="priceChart"
-    />
-  );
+  return <div ref={containerRef} className="priceChart" onPointerDown={onBrowseHistory} onWheel={onBrowseHistory}/>;
 }
 
 

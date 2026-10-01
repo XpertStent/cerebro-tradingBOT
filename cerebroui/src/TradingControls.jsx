@@ -214,16 +214,18 @@ export default function TradingControls({ onStatus }) {
             </div>
 
             <label className="unlockField">
-              <span>REAL trading account</span>
+              <span>REAL securities account</span>
               <select value={selected} onChange={event => setSelected(event.target.value)}>
                 <option value="">Select account</option>
                 {accounts.map(account => (
                   <option key={`${account.security_firm}-${account.account_id}`} value={account.account_id}>
-                    {account.security_firm} · ••••{String(account.account_id || "").slice(-4)} · {account.account_type}
+                    {account.security_firm} · Securities · {account.universal_account_masked || `API ••••${String(account.account_id || "").slice(-4)}`} · {account.account_type}
                   </option>
                 ))}
               </select>
             </label>
+
+            <p>The app account number and OpenD trading ID are separate identifiers. CASH or MARGIN describes the securities account’s financing type.</p>
 
             <label className="unlockField">
               <span>Trading password</span>

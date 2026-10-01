@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 from moomoo import Currency, ModifyOrderOp, OrderType, RET_OK, TrdEnv, TrdMarket, TrdSide
 
+from app.services.broker_history import broker_history
+from app.services.broker_identity import broker_id
 from app.services.account_fields import securities_funds, position_pnl
 from app.services.activity import activity
 from app.services.execution_context import build_execution_context
@@ -190,7 +192,7 @@ def install_hardened_trading(trading):
         try:
             ret, data = ctx.accinfo_query(
                 trd_env=TrdEnv.REAL,
-                acc_id=account_id,
+                acc_id=int(account_id),
                 refresh_cache=bool(refresh),
                 currency=Currency.USD,
             )
@@ -216,6 +218,8 @@ def install_hardened_trading(trading):
             result = {
                 "account_id": account_id,
                 "account_id_masked": f"••••{str(account_id)[-4:]}",
+                "universal_account_masked": account.get("universal_account_masked"),
+                "trading_account_masked": account.get("trading_account_masked"),
                 "mode": "LIVE",
                 "currency": "USD",
                 "security_firm": firm,
@@ -233,7 +237,7 @@ def install_hardened_trading(trading):
 
     def _map_order(self, row, *, mode, account_id):
         return {
-            "order_id": self._clean(row.get("order_id")),
+            "order_id": broker_id(row.get("order_id")),
             "symbol": self._clean(row.get("code")),
             "name": self._clean(row.get("stock_name")),
             "side": self._enum_text(row.get("trd_side")),
@@ -250,50 +254,66 @@ def install_hardened_trading(trading):
             "account_id": account_id,
         }
 
-    def get_orders(self, history_days=90):
+    def _get_orders(self, history_days=90, refresh_history=False):
         account = self.current_account()
         account_id = account["account_id"]
         firm = account.get("security_firm") or "FUTUINC"
         mode = self.mode().upper()
         env = TrdEnv.REAL if mode == "LIVE" else TrdEnv.SIMULATE
         ctx = self._context(firm)
+        context = build_execution_context(mode=mode, account=account)["context_id"]
         merged = {}
         try:
             ret, data = ctx.order_list_query(
                 trd_env=env,
-                acc_id=account_id,
+                acc_id=int(account_id),
                 refresh_cache=True,
             )
             if ret != RET_OK:
                 raise RuntimeError(str(data))
             for _, row in data.iterrows():
                 item = self._map_order(row, mode=mode, account_id=account_id)
+                item.update(source="OpenD", broker_query="order_list_query", security_firm=firm)
                 merged[str(item.get("order_id"))] = item
 
-            start = (datetime.now() - timedelta(days=max(1, min(int(history_days), 90)))).strftime("%Y-%m-%d 00:00:00")
-            end = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            try:
+            def load_history():
+                now = datetime.now(NY)
+                start = (now - timedelta(days=max(1, min(int(history_days), 90)))).strftime("%Y-%m-%d 00:00:00")
                 ret, history = ctx.history_order_list_query(
-                    start=start,
-                    end=end,
-                    trd_env=env,
-                    acc_id=account_id,
-                    order_market=TrdMarket.US,
+                    start=start, end=now.strftime("%Y-%m-%d %H:%M:%S"),
+                    trd_env=env, acc_id=int(account_id), order_market=TrdMarket.US,
                 )
-                if ret == RET_OK:
-                    for _, row in history.iterrows():
-                        item = self._map_order(row, mode=mode, account_id=account_id)
-                        merged.setdefault(str(item.get("order_id")), item)
-            except Exception:
-                # Some simulation/account combinations do not expose history.
-                pass
+                if ret != RET_OK:
+                    raise RuntimeError("OpenD history unavailable")
+                result = []
+                for _, row in history.iterrows():
+                    item = self._map_order(row, mode=mode, account_id=account_id)
+                    item.update(source="OpenD", broker_query="history_order_list_query", security_firm=firm)
+                    result.append(item)
+                return result
 
-            return sorted(
-                merged.values(),
-                key=lambda item: str(item.get("created_at") or ""),
-            )
+            historical, refreshed, stale = broker_history.history(context, load_history, force=refresh_history)
+            for item in historical:
+                # A persisted record never becomes proof of a current pending order.
+                if item.get("status") not in {"FILLED_ALL", "CANCELLED_ALL", "CANCELED_ALL", "FAILED", "DISABLED", "DELETED"}:
+                    continue
+                merged.setdefault(str(item.get("order_id")), item)
+            result = sorted(merged.values(), key=lambda item: str(item.get("created_at") or ""))
+            broker_history.save(context, result, refreshed)
+            self._order_history_status = {
+                "source": "OpenD", "context_id": context, "account_id": str(account_id),
+                "mode": mode, "security_firm": firm, "timezone": "America/New_York",
+                "history_refreshed_at": broker_history.timestamp(refreshed),
+                "history_stale": stale, "refresh_interval_seconds": broker_history.interval,
+                "current_orders_verified_at": datetime.now(timezone.utc).isoformat(),
+            }
+            return result
         finally:
             ctx.close()
+
+    def get_orders(self, history_days=90, refresh_history=False):
+        with EXECUTION_LOCK:
+            return _get_orders(self, history_days, refresh_history)
 
     def find_order_by_remark(self, remark):
         target = str(remark or "")
@@ -316,7 +336,7 @@ def install_hardened_trading(trading):
                 code=str(symbol).upper(),
                 price=px,
                 trd_env=env,
-                acc_id=account["account_id"],
+                acc_id=int(account["account_id"]),
             )
             if ret != RET_OK:
                 raise RuntimeError(str(data))
@@ -429,7 +449,7 @@ def install_hardened_trading(trading):
                     "trd_side": TrdSide.BUY if side == "BUY" else TrdSide.SELL,
                     "order_type": OrderType.MARKET if order_type == "MARKET" else OrderType.NORMAL,
                     "trd_env": env,
-                    "acc_id": account["account_id"],
+                    "acc_id": int(account["account_id"]),
                     "price": 0 if order_type == "MARKET" else price,
                     "remark": broker_remark,
                 }
@@ -477,7 +497,7 @@ def install_hardened_trading(trading):
                     qty=0,
                     price=0,
                     trd_env=env,
-                    acc_id=account["account_id"],
+                    acc_id=int(account["account_id"]),
                 )
                 if ret != RET_OK:
                     self._handle_broker_error(data)

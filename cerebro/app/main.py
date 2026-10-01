@@ -1,3 +1,6 @@
+import logging
+import threading
+
 from fastapi import FastAPI
 
 from app.config import config
@@ -121,3 +124,32 @@ def system_status():
                 "error": str(exc),
             },
         }
+
+
+_history_stop = threading.Event()
+_history_thread = None
+
+
+@app.on_event("startup")
+def start_broker_history_refresh():
+    global _history_thread
+    _history_stop.clear()
+
+    def refresh():
+        while not _history_stop.is_set():
+            try:
+                trading.get_orders()
+            except Exception:
+                logging.getLogger(__name__).warning("OpenD order history refresh unavailable; retrying in 10 minutes")
+            if _history_stop.wait(600):
+                break
+
+    _history_thread = threading.Thread(target=refresh, name="broker-history", daemon=True)
+    _history_thread.start()
+
+
+@app.on_event("shutdown")
+def stop_broker_history_refresh():
+    _history_stop.set()
+    if _history_thread:
+        _history_thread.join(timeout=2)

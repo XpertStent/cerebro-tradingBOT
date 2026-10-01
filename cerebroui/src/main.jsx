@@ -227,7 +227,8 @@ function App() {
 function Dashboard({ system, portfolio, orders, openOrders }) {
   const account = portfolio?.account;
   const positions = portfolio?.positions ?? [];
-  const latestOrder = orders?.orders?.length ? orders.orders[0] : null;
+  const matchingOrders = (orders?.orders || []).filter(order => String(order.account_id) === String(account?.account_id) && order.mode === account?.mode && order.security_firm === account?.security_firm);
+  const latestOrder = matchingOrders.at(-1) || null;
   const mode = String(system?.trading?.mode || account?.mode || "PAPER").toUpperCase();
   const live = mode === "LIVE";
 
@@ -255,7 +256,8 @@ function Dashboard({ system, portfolio, orders, openOrders }) {
       <div className="lowerGrid">
         <CollapsibleSection title="Portfolio" subtitle={`Current ${mode.toLowerCase()} account summary.`} actions={<span className={live ? "liveBadge" : "paperBadge"}>{mode}</span>}>
           <div className="rows">
-            <Row label="Account" value={maskedAccount(account)}/>
+            <Row label="OpenD trading ID" value={maskedAccount(account)}/>
+            <Row label="Moomoo app account" value={account?.universal_account_masked || "—"}/>
             <Row label="Broker" value={account?.security_firm || system?.trading?.account?.security_firm || "—"}/>
             <Row label="Total value" value={money(account?.total_value)}/>
             <Row label="Cash" value={money(account?.cash)}/>
@@ -264,17 +266,20 @@ function Dashboard({ system, portfolio, orders, openOrders }) {
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Recent Order" subtitle={`Most recently reported ${mode.toLowerCase()} broker order.`}>
+        <CollapsibleSection title="Latest Broker Order" subtitle="OpenD order history (up to 90 days). Historical orders are not new trade notifications.">
+          {orders?.history?.history_stale && <p>History refresh unavailable. Saved broker records may be stale.</p>}
           {latestOrder ? (
             <button className="order orderButton" onClick={() => window.dispatchEvent(new CustomEvent("cerebro-open-market", { detail: { symbol: latestOrder.symbol, name: latestOrder.name } }))}>
               <div>
                 <strong>{latestOrder.side} {latestOrder.quantity} {latestOrder.symbol}</strong>
                 <span>{latestOrder.name}</span>
+                <span>{latestOrder.created_at || "Date unavailable"} · New York · {latestOrder.mode} · API ••••{String(latestOrder.account_id).slice(-4)}</span>
+                <span>Filled: {latestOrder.filled_quantity ?? "—"} · Source: {latestOrder.source || "OpenD"}</span>
               </div>
               <div className="orderStatus">{latestOrder.status}</div>
             </button>
           ) : (
-            <div className="empty">No orders yet</div>
+            <div className="empty">No broker orders returned for this account.</div>
           )}
         </CollapsibleSection>
       </div>

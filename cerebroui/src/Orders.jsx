@@ -55,6 +55,7 @@ export default function Orders() {
   const [limitPrice, setLimitPrice] = useState("");
   const [preview, setPreview] = useState(null);
   const [orders, setOrders] = useState([]);
+  const [history, setHistory] = useState(null);
   const [trading, setTrading] = useState(null);
   const [loading, setLoading] = useState(false);
   const [executing, setExecuting] = useState(false);
@@ -71,12 +72,13 @@ export default function Orders() {
     } catch (_) {}
   }
 
-  async function loadOrders() {
+  async function loadOrders(force = false) {
     try {
-      const r = await fetch("/api/orders/", { cache: "no-store" });
+      const r = await fetch(`/api/orders/?refresh=${force}`, { cache: "no-store" });
       const d = await r.json();
       if (r.ok) {
         setOrders(d.orders || []);
+        setHistory(d.history);
         if (d.mode) setTrading(previous => ({ ...(previous || {}), mode: d.mode }));
       }
     } catch (_) {}
@@ -371,19 +373,20 @@ export default function Orders() {
       <CollapsibleSection
         title="Order History"
         subtitle={`${mode} account orders reported by OpenD. Open a security in Markets or cancel a pending order.`}
-        actions={<button className="refreshOrders" onClick={() => Promise.all([loadOrders(), loadTrading()])}><RefreshCw size={16}/>Refresh</button>}
+        actions={<button className="refreshOrders" onClick={() => Promise.all([loadOrders(true), loadTrading()])}><RefreshCw size={16}/>Refresh</button>}
         bodyClassName="ordersScrollable"
       >
+        <p>Source: OpenD · History saved locally and refreshed every 10 minutes · Times: New York. Last history refresh: {history?.history_refreshed_at || "Unavailable"}. {history?.history_stale && "Saved history may be stale; broker refresh failed."} Activity logs and previews are not broker executions.</p>
         <div className="ordersTableWrap">
           <table className="ordersTable">
             <thead>
               <tr>
-                <th>Env</th><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Filled</th><th>Avg Fill</th><th>Status</th><th>Order ID</th><th>Action</th>
+                <th>Date (New York)</th><th>Account</th><th>Env</th><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Filled</th><th>Avg Fill</th><th>Status</th><th>Order ID</th><th>Action</th>
               </tr>
             </thead>
             <tbody>
               {orders.length === 0 ? (
-                <tr><td colSpan="10" className="ordersEmpty">No {mode.toLowerCase()} orders yet</td></tr>
+                <tr><td colSpan="12" className="ordersEmpty">No {mode.toLowerCase()} orders yet</td></tr>
               ) : (
                 orders.slice().reverse().map(order => {
                   const terminal = TERMINAL_ORDER_STATES.has(String(order.status || "").toUpperCase());
@@ -391,6 +394,8 @@ export default function Orders() {
                   const orderMode = String(order.mode || mode).toUpperCase();
                   return (
                     <tr key={order.order_id}>
+                      <td>{order.created_at || "—"}</td>
+                      <td>••••{String(order.account_id).slice(-4)}</td>
                       <td><span className={`orderEnvironmentBadge ${orderMode === "LIVE" ? "live" : ""}`}>{orderMode}</span></td>
                       <td><strong>{order.symbol}</strong><span>{order.name}</span></td>
                       <td><span className={order.side === "BUY" ? "sideBuy" : "sideSell"}>{order.side}</span></td>
