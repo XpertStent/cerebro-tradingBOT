@@ -1,62 +1,38 @@
 # Cerebro / Moomoo OpenD Trading Stack
 
-Cerebro is a Docker-based US-equity trading research and paper-execution system built around Moomoo OpenD. It combines local market discovery, historical multi-factor quant ranking, AI web research, structured AI portfolio decisions, deterministic risk controls, persistent decision memory, and a React control interface.
+Cerebro is a Docker-based US-equity research and PAPER-trading control system built around Moomoo OpenD. It combines market discovery, historical quant ranking, clustered AI research/news, structured portfolio decisions, deterministic risk controls, persistent AI memory, order management, and a React control UI.
 
-> **Current execution scope:** paper trading only. Live broker execution is intentionally disabled until a separate live-trading phase is implemented and validated.
+> **Execution boundary:** this build is PAPER / simulated trading only. Live brokerage execution is deliberately blocked until a separate live-trading phase is implemented and validated.
 
 ## Services
 
 | Service | Purpose | Host access |
 | --- | --- | --- |
-| `opend` | Moomoo OpenD gateway | shared with Cerebro; API on 11111 internally |
+| `opend` | Moomoo OpenD gateway | API 11111 internally |
 | `login-ui` | OpenD login/status helper | `:6789` |
-| `cerebro` | FastAPI backend, quant, AI, risk, execution, memory | shares OpenD network namespace; host `:7000` through OpenD namespace |
+| `cerebro` | FastAPI backend, quant, AI, risk, memory and PAPER execution | `:7000` through the shared OpenD network namespace |
 | `cerebroui` | React control UI | `:7100` |
 
-Persistent state is stored in Docker volumes:
+Persistent state lives in Docker volumes. `cerebro-data` contains SQLite state, latest quant/AI artifacts, market/history caches and the AI research cache.
 
-- `opend-state` — OpenD state
-- `cerebro-data` — SQLite database, market/history cache, latest quant result, latest AI decision result, AI research cache
+## Manual AI workflow
 
-## Core workflow
+**CerebroUI → Strategies → Run AI Decision** runs the full pipeline:
 
-A manual AI decision run from **CerebroUI → Strategies** performs the full pipeline:
+1. Refresh the eligible US equity universe.
+2. Run independent discovery screens.
+3. Perform historical analysis and multi-factor ranking.
+4. Persist the fresh quant result.
+5. Build decision context from current PAPER account state, held positions, pending orders, watchlist, quant candidates, fresh market snapshots, AI memory and current deterministic risk settings.
+6. Research holdings/candidates using the configured **Research / News Model**.
+7. Run one structured **Decision-Making Model** request across the completed portfolio context.
+8. Validate the returned decisions and persist decision/thesis memory.
+9. Convert actionable decisions into deterministic whole-share proposals.
+10. Apply deterministic portfolio/risk controls.
+11. With auto-execution OFF (default), wait for per-decision approval/rejection. With auto-execution ON, submit only risk-valid PAPER orders.
+12. Re-price and re-run risk checks immediately before every broker submission.
 
-1. Refresh the eligible US listing universe.
-2. Run independent snapshot discovery screens.
-3. Deep-analyse the configured candidate pool using historical market data.
-4. Rank candidates with the configured multi-factor quant model.
-5. Persist the latest quant result.
-6. Build portfolio context from current paper positions, pending orders, watchlist, quant candidates, AI memory, and the currently configured deterministic risk limits.
-7. Run AI web research for relevant holdings / quant candidates. Transient rate-limit, timeout, connection, and 5xx failures are retried with exponential backoff and jitter before research is marked failed.
-8. Send the structured context to the configured decision model.
-9. Validate that the model returns exactly one allowed action for every candidate.
-10. Persist decisions and thesis updates.
-11. Convert actionable intents into deterministic whole-share order proposals.
-12. Run deterministic risk checks.
-13. Either:
-    - wait for an **individual Approve / Reject decision on each actionable proposal** in CerebroUI (default), or
-    - automatically submit risk-approved PAPER orders when **Authorize AI Auto-Execution** is enabled in Settings.
-
-AI never talks directly to the broker. Order sizing, fresh pre-execution validation, and risk approval remain deterministic Cerebro code.
-
-## Live workflow telemetry
-
-The Strategies page polls workflow status while a manual run is active and shows operational progress for:
-
-- quant stage, symbol, elapsed time and completion percentage
-- parallel research completion counts
-- research-ready and research-error counts
-- symbols as research workers finish
-- number of research workers still in flight
-- research retry state for transient/rate-limit failures
-- decision-model request state and elapsed time
-- deterministic risk / proposal stage
-- an event stream covering quant, research, model, risk and approval stages
-
-The UI does **not** expose private model chain-of-thought. During the decision-model stage it shows that the request is active, how long it has been running, and the final structured reasoning/output when complete.
-
-Quant progress is explicitly set to 100% when historical analysis finishes. The internal 99% cap is used only while a quant job is still actively processing.
+The AI does not directly control the broker. Sizing, duplicate-order prevention, execution mode and final risk validation remain deterministic Cerebro code.
 
 ## AI actions
 
@@ -64,202 +40,149 @@ The decision model can return:
 
 - `BUY` — open a new position
 - `ADD` — increase an existing holding
-- `HOLD` — keep an existing holding
-- `REDUCE` — reduce an existing holding without fully exiting
-- `SELL` — fully exit a holding
-- `WATCH` — no order now, but the non-held candidate remains interesting enough to monitor for a future trigger, better entry, event resolution, or stronger evidence
-- `IGNORE` — no order and no monitoring thesis is warranted for that non-held candidate in the current run
+- `HOLD` — retain an existing holding
+- `REDUCE` — partially reduce an existing holding
+- `SELL` — exit an existing holding
+- `WATCH` — no order now, but keep the non-held symbol under consideration
+- `IGNORE` — dismiss the non-held symbol for the current run
 
-Held symbols are constrained to `ADD / HOLD / REDUCE / SELL`; non-held symbols are constrained to `BUY / WATCH / IGNORE`.
+Held symbols are constrained to `ADD / HOLD / REDUCE / SELL`. Non-held symbols are constrained to `BUY / WATCH / IGNORE`.
 
-The decision prompt explicitly tells the model to perform independent investment reasoning across quant signals, structured research, portfolio state, memory, uncertainty, and risk limits. Missing web research is not by itself a command to WATCH: the model must decide whether remaining evidence supports BUY, WATCH, or IGNORE without inventing facts.
+The prompt explicitly allows independent investment analysis using quant signals, market snapshots, research/news, portfolio state, memory and risk policy. Missing research is not treated as an automatic WATCH instruction.
 
-## Risk-aware AI context
+## Clustered research/news and rate limits
 
-The decision context contains the deterministic execution policy, including:
+Research/news is batched dynamically instead of sending one OpenAI request per symbol. **Settings → AI & Models → Research → Parallel Research Clusters** controls the number of concurrent balanced research requests.
 
-- trading/risk engine state
-- current PAPER execution boundary
+Example: 30 research symbols with 4 clusters are split approximately `8 + 8 + 7 + 7`. Cached research is removed before clustering, so repeat runs may require fewer API calls.
+
+Transient OpenAI failures are retried up to the configured retry limit. For a provider response such as `Please try again in 425ms`, Cerebro waits the provider-specified delay **plus a 1-second safety buffer** before retrying. `Retry-After` headers are preferred when present. If no provider delay is available, Cerebro falls back to exponential backoff with jitter for rate-limit, timeout, connection and retryable 5xx failures.
+
+The Strategies UI exposes research completion, cluster count, in-flight work, per-symbol errors and retry state. Error rows are expandable so the exact failed symbols/API messages can be inspected.
+
+## Decision and approval behaviour
+
+`execution.auto_execute` / **Authorize AI Auto-Execution** defaults to OFF.
+
+When OFF, each actionable risk-approved proposal has its own:
+
+- **Approve & Execute this order**
+- **Reject this decision**
+
+Resolving one decision does not resolve the others. The page also provides **Approve All Remaining** and **Reject All Remaining** conveniences; these still process the remaining proposals individually so each approval receives the same fresh broker/price/risk validation.
+
+When auto-execution is ON, approval controls are omitted for that run because risk-approved PAPER proposals are executed immediately. Live execution remains blocked.
+
+## Deterministic risk context
+
+The model is informed about the current execution policy so it can propose realistic allocations, including:
+
+- trading/risk enabled state
+- PAPER-only mode
 - maximum order value
-- maximum single-position percentage
-- maximum invested-capital percentage
-- minimum cash reserve percentage
+- maximum position percentage
+- maximum invested percentage
+- minimum cash reserve
 - maximum new positions per run
-- maximum order size relative to 60-day median turnover
-- current default order type and auto-execution state
+- maximum order/liquidity percentage when turnover data is available
+- default order type
+- auto-execution state
 
-This does not give the AI authority over risk controls. It lets the model choose realistic target exposure instead of knowingly requesting sizing that the deterministic engine will reject. Every actionable proposal is still independently evaluated by Cerebro after the model responds, and risk is checked again with fresh broker/price state immediately before execution.
+These values are context, not authority. Cerebro independently enforces the risk engine after the model response and again immediately before broker submission.
 
-## Quant discovery and ranking
+## CerebroUI
 
-Discovery screens are independent and each has its own configurable Top-N:
+The UI is organized around Dashboard, Markets, Watchlist, Strategies, Orders, Portfolio, Activity / Logs and Settings.
 
-- Daily Momentum
-- Volume Surge
-- Turnover Rate
-- Liquidity
-- Near 52-Week High
+Navigation uses hash routes such as `#/strategies` and `#/orders`, so browser refresh, Back and Forward preserve the selected module instead of returning to Dashboard. Cross-module links use the same navigation layer; order/portfolio/watchlist/AI symbols can open directly in Markets.
 
-The deduplicated discovery union is then historically analysed and ranked with these configurable final factors:
+Reusable collapsible sections and bounded scroll regions are used for large datasets, including quant rankings, AI decisions, research errors, positions, order history and activity logs.
 
-- Momentum
-- Trend
-- Relative Strength
-- Breakout
-- Volume
-- Volatility Quality
-- Overextension Quality
+### Watchlist
 
-The default final factor weights remain 22 / 22 / 18 / 12 / 10 / 8 / 8 percent and must total 100%.
+The Watchlist supports:
+
+- live ticker/company suggestions
+- explicit Search button and Enter-to-search
+- manual Add / Remove
+- direct Markets navigation
+- batched live snapshots for all watched symbols
+- current traded price, absolute change and percentage change
+- quote refresh without losing the stored watchlist if market data temporarily fails
+- short-lived server-side search caching so repeated type-ahead queries do not repeatedly scan the full symbol universe
+
+### Activity / Logs
+
+The Activity page is a persistent SQLite audit trail with:
+
+- text search
+- category and level filters
+- automatic refresh
+- expandable event rows
+- raw structured event details
+- symbol/order metadata
+- deep links back to Markets or Orders
+
+Order previews, risk decisions, order submissions/cancellations, watchlist changes, AI workflow starts/completions/failures, history clears and AI approvals/rejections are auditable events.
+
+### Orders and Portfolio
+
+Orders supports manual symbol search, risk preview, PAPER execution, pending-order cancellation and direct symbol navigation. Portfolio positions also link directly to the Markets detail/chart page.
+
+## Stored results and testing controls
+
+Strategies provides separate controls for:
+
+- **Clear Quant** — remove the latest quant artifact
+- **Clear AI Result** — remove the latest displayed/persisted AI result
+- **Clear All AI History** — destructive test reset for AI runs, decisions, outcomes and thesis memory
+
+The all-history reset intentionally does not delete broker orders, settings, watchlist, activity logs, market-history caches or quant artifacts.
+
+A manual AI run always performs a fresh quant pass before the AI stages.
 
 ## Settings
 
-Cerebro uses a persistent SQLite-backed Settings registry. Most behaviour can be changed from **CerebroUI → Settings** without rebuilding containers.
+Settings are SQLite-backed and most behaviour is runtime configurable without rebuilding containers. Important groups include discovery limits, quant weights, data-quality filters, research model, **Parallel Research Clusters**, decision model/reasoning effort, AI context limits, deterministic portfolio/risk limits and execution controls.
 
-Important sections include:
+The OpenAI API key is treated as a secret and is not returned to the browser.
 
-- General / trading mode
-- Independent discovery screen limits
-- Universe and liquidity filters
-- Final quant factor weights
-- Advanced factor composition
-- Data-quality and discontinuity thresholds
-- AI research model and research concurrency
-- AI decision model and reasoning effort
-- AI context / memory limits
-- Portfolio and risk limits
-- Execution controls
-- Automation placeholders for future scheduled cycles
-
-The OpenAI API key is treated as a secret and is never returned to the browser.
-
-### AI model separation
-
-Cerebro intentionally keeps these separate:
-
-- **OpenAI API Key**
-- **Research / News Model**
-- **Decision-Making Model**
-
-Changing the research model does not change the final portfolio decision model.
-
-## Manual approval vs auto-execution
-
-`execution.auto_execute` / **Authorize AI Auto-Execution** defaults to `OFF`.
-
-### OFF — default
-
-After a completed AI run, CerebroUI shows the full decision set, reasoning, research status, target exposure, deterministic order proposal, and risk checks.
-
-Every risk-approved actionable proposal has its own controls:
-
-- **Approve & Execute this order** — approves and submits only that proposal after a fresh deterministic risk check.
-- **Reject this decision** — rejects only that proposal and submits no order for it.
-
-Approving or rejecting one symbol never resolves another symbol's proposal. WATCH, IGNORE and HOLD decisions require no broker order. Risk-blocked proposals cannot be manually forced through the UI.
-
-### ON
-
-Risk-approved PAPER proposals are submitted immediately after the AI decision completes. The decision summary remains visible, but manual Approve / Reject controls are not shown because execution has already occurred.
-
-## CerebroUI presentation
-
-Reusable collapsible sections are used across Dashboard, Strategies, Orders, Portfolio, Watchlist and Activity / Logs. Settings uses collapsible subsection groups.
-
-Large result sets use bounded scroll regions so quant rankings, AI decisions, activity history, order history and positions do not force the entire page to become excessively tall.
-
-Security links in quant results, research status, orders and positions open the corresponding symbol directly in **Markets**, reusing the same quote/chart detail view as a manual market search.
-
-Each AI decision is individually collapsible and shows its research status. READY research displays retained source count/cache state; failed research displays the actual returned error to make quota/rate-limit problems visible instead of silently appearing as “research unavailable.”
-
-## Order management
-
-The Orders page supports:
-
-- manual order preview
-- deterministic risk checks
-- PAPER order execution
-- live order-history refresh
-- cancellation of non-terminal pending PAPER orders
-- **View** navigation from any order to the security's Markets detail page
-
-Filled, cancelled, failed, disabled, or deleted orders are treated as terminal and cannot be cancelled again.
-
-## Stored results and test runs
-
-The Strategies page provides separate controls to clear:
-
-- the latest persisted quant result
-- the latest persisted AI decision result
-- **all persistent AI decision history and thesis memory** for explicit test resets
-
-The **Clear All AI History** control requires two browser confirmations. It deletes AI runs, decisions, decision outcomes and thesis history, plus the latest AI decision artifact. It does **not** delete broker orders, settings, watchlist, activity logs, cached market history, quant artifacts or research cache.
-
-A fresh **Run AI Decision** always starts a new quant run before research and decision generation.
-
-## AI memory
-
-SQLite stores:
-
-- AI runs / decisions
-- execution status and broker order IDs
-- active and historical theses
-- thesis invalidation text
-- recent risk / user rejections
-- future decision-outcome evaluation records
-
-The thesis schema allows historical closed theses while enforcing only one ACTIVE thesis per symbol.
-
-## Risk controls
-
-Current deterministic checks include:
-
-- risk engine enabled
-- trading execution enabled
-- PAPER-only execution boundary
-- valid order quantity
-- maximum order value
-- maximum single-position percentage
-- maximum invested-capital percentage
-- minimum cash reserve percentage
-- maximum number of new positions per AI run
-- maximum order value relative to 60-day median turnover when available
-
-Risk-approved AI proposals are re-priced and re-evaluated against fresh account, position, pending-order, and market state immediately before order submission.
-
-## Environment
-
-At minimum, configure the OpenD credentials required by the container image and an OpenAI API key for AI features.
-
-Example `.env` entries:
-
-```env
-OPENAI_API_KEY=...
-OPENAI_RESEARCH_MODEL=gpt-5.6-luna
-AI_RESEARCH_MAX_WORKERS=12
-```
-
-Do not commit `.env` or API keys.
-
-## Start / rebuild
+## Start / redeploy
 
 ```bash
 docker compose up -d --build
 ```
 
-For normal backend/UI development rebuilds:
+For backend/UI-only rebuilds:
 
 ```bash
 docker compose build cerebro cerebroui
 docker compose up -d cerebro cerebroui
 ```
 
-## Useful endpoints
+For Portainer GitOps testing of this feature branch, use the normal clone URL and repository reference:
+
+```text
+Repository: https://github.com/XpertStent/moomoo-opend.git
+Reference:  refs/heads/feature/ai-decision-engine
+```
+
+## Useful API endpoints
 
 ### System
 
 - `GET /health`
 - `GET /system/status`
+
+### Market / watchlist
+
+- `GET /market/search`
+- `GET /market/snapshots`
+- `GET /market/{symbol}`
+- `GET /market/{symbol}/candles`
+- `GET /watchlist/`
+- `POST /watchlist/`
+- `DELETE /watchlist/{symbol}`
 
 ### Quant
 
@@ -276,10 +199,11 @@ docker compose up -d cerebro cerebroui
 - `GET /ai/decision/result/{run_id}`
 - `GET /ai/decision/latest`
 - `DELETE /ai/decision/latest`
-- `DELETE /ai/decision/history` — destructive test-only AI memory reset
+- `DELETE /ai/decision/history`
 - `POST /ai/decision/{run_id}/proposal/{decision_id}/approve`
 - `POST /ai/decision/{run_id}/proposal/{decision_id}/reject`
-- legacy batch approve/reject endpoints remain for compatibility but CerebroUI does not use them
+
+Legacy run-level approve/reject endpoints remain available for compatibility. CerebroUI bulk controls intentionally resolve proposals through the individual proposal endpoints.
 
 ### Orders
 
@@ -288,24 +212,19 @@ docker compose up -d cerebro cerebroui
 - `POST /orders/execute`
 - `DELETE /orders/{order_id}`
 
-### Settings
+### Activity / Settings
 
+- `GET /activity/`
 - `GET /settings`
 - `PUT /settings`
 - `POST /settings/reset`
 
-FastAPI documentation is available from the Cerebro service at `/docs`.
+FastAPI documentation is available from Cerebro at `/docs`.
 
 ## Validation
 
-GitHub Actions validates every `main` and `feature/**` push by:
-
-1. compiling all Python under `cerebro/app`
-2. installing CerebroUI dependencies
-3. building the React production bundle
-
-Before merging an AI-engine change, also validate it against the real local OpenD PAPER environment because CI cannot exercise a logged-in broker session or external OpenAI calls.
+GitHub Actions validates feature pushes by compiling all Python under `cerebro/app`, installing CerebroUI dependencies and building the React production bundle. CI verifies syntax/build integrity; the final branch still needs a real local OpenD PAPER smoke test because CI cannot exercise a logged-in broker or external OpenAI request.
 
 ## Safety boundary
 
-This repository currently supports PAPER execution only. A UI setting, AI response, or API caller cannot intentionally bypass the deterministic risk layer to reach live brokerage execution. Live trading requires a separate implementation covering real-account selection, trade unlock, live-only safeguards, and dedicated validation.
+This branch is intended for simulated trading. UI actions, model output and API callers cannot intentionally bypass the deterministic PAPER-only execution boundary. Live trading requires separate account selection, unlock/safeguards and dedicated validation before it should be enabled.
