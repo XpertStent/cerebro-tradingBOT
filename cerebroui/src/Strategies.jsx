@@ -67,6 +67,8 @@ export default function Strategies() {
   const approvalMode = bundle?.execution?.approval_mode;
   const pendingProposals = proposals.filter(item => item.status === "PENDING_APPROVAL");
   const pendingCount = pendingProposals.length;
+  const pendingWatchCount = pendingProposals.filter(item => item.action === "WATCH").length;
+  const pendingOrderCount = pendingCount - pendingWatchCount;
   const autoExecuted = approvalMode === "AUTO";
   const running = progress?.status === "RUNNING" || progress?.status === "QUEUED";
   const researchSymbols = progress?.ai?.research_symbols || {};
@@ -173,7 +175,9 @@ export default function Strategies() {
     if (!runId || !proposal?.decision_id) return;
     if (action === "approve") {
       const ok = window.confirm(
-        `Approve only ${proposal.symbol} and submit its PAPER order? No other AI decision will be approved.`
+        proposal.action === "WATCH"
+          ? `Approve ${proposal.symbol} WATCH and add it to Monitored Securities? No broker order will be placed.`
+          : `Approve only ${proposal.symbol} and submit its PAPER order? No other AI decision will be approved.`
       );
       if (!ok) return;
     }
@@ -193,7 +197,9 @@ export default function Strategies() {
       setMessage({
         kind: "ok",
         text: action === "approve"
-          ? `${proposal.symbol} approved and execution attempted. Other decisions were unchanged.`
+          ? (proposal.action === "WATCH"
+              ? `${proposal.symbol} approved and added to Monitored Securities. Other decisions were unchanged.`
+              : `${proposal.symbol} approved and execution attempted. Other decisions were unchanged.`)
           : `${proposal.symbol} rejected. Other decisions were unchanged.`
       });
       await refreshResult(runId);
@@ -208,8 +214,8 @@ export default function Strategies() {
     if (!runId || pendingProposals.length === 0) return;
     const ok = window.confirm(
       action === "approve"
-        ? `Approve ALL ${pendingProposals.length} remaining AI proposals? Each proposal will still be revalidated and submitted individually to the PAPER account.`
-        : `Reject ALL ${pendingProposals.length} remaining AI proposals? No broker orders will be submitted for them.`
+        ? `Approve ALL ${pendingProposals.length} remaining AI decisions? ${pendingOrderCount} trade action(s) will receive fresh PAPER risk/execution checks and ${pendingWatchCount} WATCH action(s) will be added to Monitored Securities.`
+        : `Reject ALL ${pendingProposals.length} remaining AI decisions? No broker orders will be submitted and WATCH suggestions will not be added.`
     );
     if (!ok) return;
 
@@ -246,8 +252,8 @@ export default function Strategies() {
       } : {
         kind: "ok",
         text: action === "approve"
-          ? `All ${completed} remaining proposals were approved and individually sent through final PAPER execution checks.`
-          : `All ${completed} remaining proposals were rejected. No orders were submitted for them.`
+          ? `All ${completed} remaining decisions were approved. Trade actions received final PAPER checks and WATCH actions were added to Monitored Securities.`
+          : `All ${completed} remaining decisions were rejected. No pending trade/watchlist actions were applied.`
       });
     } finally {
       setBatchBusy(false);
@@ -496,7 +502,7 @@ export default function Strategies() {
           <div className="aiSummaryGrid">
             <div className="aiSummaryCard"><span>Portfolio</span><strong>{bundle.ai.decision.portfolio_summary || "—"}</strong></div>
             <div className="aiSummaryCard"><span>Market</span><strong>{bundle.ai.decision.market_summary || "—"}</strong></div>
-            <div className="aiSummaryCard"><span>Decisions</span><strong>{decisions.length} · {pendingCount} awaiting approval</strong></div>
+            <div className="aiSummaryCard"><span>Decisions</span><strong>{decisions.length} · {pendingCount} awaiting approval ({pendingOrderCount} trade · {pendingWatchCount} watch)</strong></div>
             <div className="aiSummaryCard"><span>Decision web verification</span><strong>{bundle.ai.decision_web_research?.enabled ? `${bundle.ai.decision_web_research.calls || 0} search calls · ${bundle.ai.decision_web_research.source_count || 0} unique sources observed` : "Disabled"}</strong></div>
           </div>
         </CollapsibleSection>
@@ -531,7 +537,7 @@ export default function Strategies() {
 
       <CollapsibleSection
         title="AI Decisions & Reasoning"
-        subtitle="Open only the decisions you want to inspect; individual and bulk approval controls remain available."
+        subtitle="Open only the decisions you want to inspect. WATCH approvals add symbols to Monitored Securities; trade approvals retain final PAPER risk checks."
         actions={<DatabaseZap size={18}/>} 
         bodyClassName="scrollRegion"
       >
@@ -545,6 +551,7 @@ export default function Strategies() {
                 const researchStatus = research?.status || (candidate ? "NOT_AVAILABLE" : null);
                 const proposalBusy = decisionBusyId === proposal?.decision_id;
                 const canDecide = !autoExecuted && ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) && proposal?.status === "PENDING_APPROVAL";
+                const approveLabel = item.action === "WATCH" ? "Approve & Add to Watchlist" : "Approve & Execute this order";
 
                 return (
                   <details className="aiDecisionCard" key={item.symbol}>
@@ -575,7 +582,7 @@ export default function Strategies() {
 
                       {proposal && (
                         <div className="aiProposal">
-                          <div className="aiProposalHead"><strong>Deterministic proposal</strong><span className="aiProposalStatus">{proposal.status}</span></div>
+                          <div className="aiProposalHead"><strong>{proposal.proposal_type === "WATCHLIST" ? "Monitored-security proposal" : "Deterministic proposal"}</strong><span className="aiProposalStatus">{proposal.status}</span></div>
                           <p>{proposal.message}</p>
                           {proposal.order && <p><strong>{proposal.order.side}</strong> {proposal.order.quantity} shares · estimated ${Number(proposal.order.estimated_price || 0).toFixed(2)}</p>}
                           {proposal.risk?.risk_checks?.length > 0 && (
@@ -590,7 +597,7 @@ export default function Strategies() {
                                 <XCircle size={15}/>{proposalBusy ? "Working…" : "Reject this decision"}
                               </button>
                               <button className="aiPrimary" disabled={proposalBusy || batchBusy} onClick={() => actOne(proposal, "approve")}>
-                                <CheckCircle2 size={15}/>{proposalBusy ? "Working…" : "Approve & Execute this order"}
+                                <CheckCircle2 size={15}/>{proposalBusy ? "Working…" : approveLabel}
                               </button>
                             </div>
                           )}
