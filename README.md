@@ -10,7 +10,7 @@ Cerebro is a Docker-based US-equity research and trading control stack built aro
 
 ## Execution environments
 
-Cerebro now has two broker execution environments on `feature/live-trading`:
+Cerebro has two broker execution environments on `feature/live-trading`:
 
 - **PAPER** — uses the Moomoo simulated account and does not require trade unlock.
 - **LIVE** — uses an explicitly selected ACTIVE REAL account with US trading permission and requires OpenD trade unlock before broker actions.
@@ -36,7 +36,7 @@ Cerebro discovers Moomoo trade accounts through OpenD and separates SIMULATE fro
 2. ACTIVE, and
 3. authorized for the US market.
 
-The broker/security-firm is discovered per account instead of assuming one hard-coded regional firm. The current implementation checks Moomoo/Futu security-firm values exposed by the installed API package, including US and Australian variants when supported.
+The broker/security-firm is discovered per account instead of assuming one hard-coded regional firm. The implementation checks security-firm values exposed by the installed Moomoo API package, including US and Australian variants when supported.
 
 If exactly one eligible LIVE account exists, Cerebro can select it automatically. If several are available, the operator must choose one in the **Unlock Trading** control. The selected LIVE account id is persisted so a restart does not silently switch accounts.
 
@@ -47,9 +47,9 @@ The CerebroUI header displays a persistent execution badge:
 - `PAPER` in simulated mode,
 - `LIVE TRADING` in real-money mode.
 
-When LIVE mode is active, the top-right **Unlock Trading** button becomes available. The dialog lets the operator choose the eligible REAL account and asks the backend to unlock OpenD.
+When LIVE mode is active, the top-right **Unlock Trading** button is visible throughout the application. The dialog lets the operator choose the eligible REAL account and asks the backend to unlock OpenD.
 
-For security, the browser does not collect or store the raw Moomoo transaction credential. Configure the MD5 form on the `cerebro` container as:
+For security, the browser does not collect or store the raw Moomoo transaction credential. Configure the lowercase MD5 form on the `cerebro` container as:
 
 ```text
 MOOMOO_TRADING_PASSWORD_MD5=<your-md5-value>
@@ -57,9 +57,11 @@ MOOMOO_TRADING_PASSWORD_MD5=<your-md5-value>
 
 The value is read only from the backend container environment and passed to OpenD for unlock. Do not commit it to this repository. `.env` is ignored by Git.
 
+The UI reports when the backend unlock credential has not been configured and disables the final unlock action until it is available.
+
 A broker action that encounters a locked OpenD session automatically pauses in the UI, opens the same unlock dialog, and retries the original request after a successful unlock. This covers manual order placement, order cancellation and AI broker execution. WATCH decisions do not require broker unlock because they only update Cerebro's monitored securities.
 
-The header can also explicitly lock LIVE trading again.
+The header can explicitly lock LIVE trading again.
 
 ## Portainer deployment
 
@@ -75,7 +77,7 @@ and use:
 refs/heads/feature/live-trading
 ```
 
-For LIVE testing, add the following environment variable to the stack/Portainer environment without placing the value in Git:
+For LIVE testing, add this environment variable to the stack/Portainer environment without placing the value in Git:
 
 ```text
 MOOMOO_TRADING_PASSWORD_MD5=<value>
@@ -95,7 +97,7 @@ Switching the execution mode clears broker/account caches and resets Cerebro's l
 
 The simulated account can be much larger than the real account, so Cerebro does not reuse the PAPER account's nominal dollar sizing.
 
-AI sizing is expressed as a percentage of the **currently selected account's actual total value**. For example, a 10% target is calculated from the REAL account when LIVE is active, not from the simulated portfolio.
+AI sizing is expressed as a percentage of the **currently selected account's actual total value**. A 10% target is therefore calculated from the REAL account when LIVE is active, not from the simulated portfolio.
 
 The deterministic risk engine also scales BUY capacity to the active account. The effective maximum BUY order is the lower of:
 
@@ -111,7 +113,7 @@ current portfolio value × risk.max_position_pct
 
 This means a `$1,000` absolute PAPER-era ceiling cannot automatically force a `$1,000` order into a small real account.
 
-LIVE/PAPER risk evaluation also checks:
+LIVE/PAPER risk evaluation checks:
 
 - positive whole-share quantity,
 - available funds,
@@ -124,11 +126,35 @@ LIVE/PAPER risk evaluation also checks:
 - duplicate pending-order prevention in the AI path,
 - maximum new positions per AI run.
 
-Cerebro continues to execute whole shares. If an explicit AI BUY/ADD target rounds below one whole share, the existing one-share normalization can propose one share, but that share must still pass all current-account risk checks. On a small LIVE account, an expensive one-share position can therefore be blocked automatically.
+Cerebro continues to execute whole shares. If an explicit AI BUY/ADD target rounds below one whole share, one-share normalization can propose one share, but that share still must pass every current-account risk check. On a small LIVE account, an expensive one-share position can therefore be blocked automatically.
+
+## Additional LIVE-only execution guards
+
+The first LIVE implementation intentionally starts more conservatively than the PAPER environment.
+
+### Regular US session only
+
+LIVE broker submissions are allowed only when Moomoo reports the US security in the regular `AFTERNOON` market state, which corresponds to the normal US continuous session. Pre-market, after-hours and overnight execution are deliberately blocked for this first LIVE release.
+
+The market state is checked during manual preview/execution and again immediately before AI broker submission. If Cerebro cannot verify the market state, LIVE execution fails closed.
+
+### Symbol BUY cooldown
+
+`execution.cooldown_minutes` is now active for LIVE BUY orders. Cerebro checks the persistent Activity history for a recent LIVE Cerebro execution in the same symbol and blocks another BUY until the cooldown expires.
+
+SELL/REDUCE exits are not blocked by this cooldown.
+
+### AI slippage guard
+
+`execution.max_slippage_pct` is now active for LIVE AI orders. Cerebro compares the proposal's original reference price with the fresh price obtained immediately before broker submission. If the price drift exceeds the configured limit, the AI order is blocked and the reason is written to Activity.
+
+### Fresh server-side preview
+
+The manual `/orders/execute` endpoint always rebuilds the preview from fresh account, position and market information before sending anything to OpenD. A direct API call therefore cannot bypass the server-side risk/session/cooldown pass.
 
 ## Manual order flow
 
-**Orders → New Order** now uses the selected execution environment.
+**Orders → New Order** uses the selected execution environment.
 
 The preview refreshes the account and positions and shows:
 
@@ -139,7 +165,7 @@ The preview refreshes the account and positions and shows:
 - estimated order value,
 - projected cash,
 - effective account-scaled order limit,
-- every deterministic risk check.
+- every deterministic risk and LIVE safety check.
 
 LIVE execution displays a real-money confirmation before submission. If OpenD is locked, the request pauses, the unlock dialog opens, and the original order is retried only after unlock succeeds.
 
@@ -196,17 +222,20 @@ The Dashboard uses the same account and does not retain the $1M simulated values
 10. Apply account-aware risk controls.
 11. With auto-execution OFF, wait for individual/bulk approval.
 12. Immediately before broker submission, refresh account/positions/price and repeat deterministic execution checks.
-13. Submit through the selected PAPER or LIVE environment.
+13. In LIVE mode also verify regular-session state, symbol BUY cooldown and proposal-to-submit slippage.
+14. Submit through the selected PAPER or LIVE environment.
 
 The AI never receives direct broker authority. Sizing and final broker execution remain deterministic application code.
 
 ### LIVE AI execution
 
-When `execution.auto_execute` is OFF, AI proposals behave exactly like the established manual-approval workflow. Approving a BUY/ADD/REDUCE/SELL in LIVE mode submits a REAL order after fresh checks and unlock.
+When `execution.auto_execute` is OFF, AI proposals use the established manual-approval workflow. Approving a BUY/ADD/REDUCE/SELL in LIVE mode submits a REAL order only after fresh checks and trade unlock.
 
 If LIVE mode is locked when a run was configured for auto-execution, Cerebro defers automatic broker execution and leaves actionable proposals for manual approval instead of failing the whole AI run or bypassing unlock.
 
-If LIVE mode is already deliberately unlocked and `execution.auto_execute` is enabled, approved deterministic AI broker actions can reach the REAL account. Keep this option OFF unless that behavior is explicitly intended.
+If LIVE mode is already deliberately unlocked and `execution.auto_execute` is enabled, risk-approved deterministic AI broker actions can reach the REAL account. Keep this option OFF unless that behavior is explicitly intended.
+
+A locked manual AI approval returns the dedicated unlock-required response. CerebroUI opens the global unlock modal and can retry that exact approval after unlock.
 
 ## AI actions
 
@@ -224,7 +253,7 @@ Held symbols are constrained to `ADD / HOLD / REDUCE / SELL`. Non-held symbols a
 
 ## Activity and audit trail
 
-Activity remains persisted in SQLite and now records execution-specific information for LIVE/PAPER events. Broker/order/AI records can include:
+Activity remains persisted in SQLite and records execution-specific information for LIVE/PAPER events. Broker/order/AI records can include:
 
 - environment,
 - selected account id,
@@ -233,9 +262,10 @@ Activity remains persisted in SQLite and now records execution-specific informat
 - symbol,
 - order id,
 - broker status,
-- deterministic risk result.
+- deterministic risk result,
+- final LIVE safety checks and blocked reasons.
 
-Additional security/broker events include LIVE account selection, successful unlock, failed unlock, explicit lock and locked trade attempts.
+Additional security/broker events include LIVE account selection, successful unlock, failed unlock, explicit lock and locked trade attempts. LIVE AI safety failures are also logged as risk events.
 
 The UI's Activity / Logs page continues to expose event search, category/level filtering and detailed payload expansion.
 
@@ -251,23 +281,26 @@ POST /api/trading/unlock
 POST /api/trading/lock
 ```
 
-Existing APIs such as `/api/portfolio/`, `/api/orders/`, `/api/orders/preview` and `/api/orders/execute` are now environment-aware.
+Existing APIs such as `/api/portfolio/`, `/api/orders/`, `/api/orders/preview` and `/api/orders/execute` are environment-aware.
 
-A locked broker action returns an unlock-required response. CerebroUI recognizes both the dedicated locked response and the AI API's propagated unlock marker, opens the unlock control, and can retry the original action after unlock.
+A locked broker action returns an unlock-required response. CerebroUI recognizes it, opens the unlock control, and can retry the original action after unlock.
 
-## Safety boundaries currently kept intentionally
+## Safety boundaries intentionally retained
 
-The first LIVE implementation is deliberately conservative:
+The LIVE implementation is deliberately conservative:
 
 - whole shares only,
 - long-only order validation,
 - no automatic short creation,
 - no options execution,
 - no independent margin-sizing logic,
+- regular US session only for LIVE execution,
 - `trading.enabled` remains a master kill switch,
 - deterministic risk remains mandatory,
 - selected account must be REAL, ACTIVE and US-authorized,
-- live unlock is explicit and can be re-locked from the UI.
+- live unlock is explicit and can be re-locked from the UI,
+- LIVE BUY cooldown is enforced,
+- AI price drift is bounded by the configured slippage limit.
 
 Broker/account permissions still have final authority. A request passing Cerebro risk can still be refused by Moomoo/OpenD.
 
@@ -278,17 +311,19 @@ Before testing a real order:
 1. Deploy `feature/live-trading`, not `main`.
 2. Confirm OpenD is logged in.
 3. Configure `MOOMOO_TRADING_PASSWORD_MD5` in Portainer; never commit it.
-4. Leave `execution.auto_execute` OFF.
+4. Leave `execution.auto_execute` OFF for the first tests.
 5. In Settings, switch `trading.mode` to `live` and save.
 6. Confirm the red `LIVE TRADING` badge appears.
 7. Click **Unlock Trading**.
 8. Confirm the expected REAL account/security firm appears; select it.
 9. Unlock and verify the header shows `Unlocked`.
 10. Open Portfolio and verify the balance/positions match the REAL account rather than the simulated $1M account.
-11. In Orders, preview a deliberately small whole-share order first.
-12. Verify effective order limit, available-funds, position %, cash-reserve and other checks before considering submission.
-13. Confirm LIVE order history and Activity show the resulting environment/account/order information.
-14. Use the header control to lock trading again after testing.
+11. Check `risk.max_order_value`, `risk.max_position_pct`, `risk.max_invested_pct`, `risk.min_cash_reserve_pct`, `risk.max_daily_loss`, `execution.cooldown_minutes` and `execution.max_slippage_pct` before the first live test.
+12. Test during the regular US session; LIVE order preview should show the regular-session safety check passing.
+13. In Orders, preview a deliberately small whole-share order first.
+14. Verify effective order limit, available funds, position %, cash reserve, cooldown and all other checks before considering submission.
+15. Confirm LIVE order history and Activity show the resulting environment/account/order information.
+16. Use the header control to lock trading again after testing.
 
 ## Returning to PAPER
 
