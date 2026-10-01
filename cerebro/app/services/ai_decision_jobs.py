@@ -466,6 +466,28 @@ class AIDecisionJobManager:
         return None
 
     def latest(self):
+        # If the operator navigates away from Strategies while a job is still
+        # running, the React component is unmounted and loses its local run_id.
+        # The backend job itself continues. Prefer the newest active job here so
+        # the normal /latest bootstrap can immediately reattach to it when the
+        # page is opened again. Once no job is active, fall back to the latest
+        # persisted completed decision artifact as before.
+        with self._lock:
+            active = [
+                job for job in self._jobs.values()
+                if job.get("status") in {"QUEUED", "RUNNING"}
+            ]
+            if active:
+                newest = max(
+                    active,
+                    key=lambda item: float(item.get("created_at") or 0),
+                )
+                data = deepcopy(newest)
+                data.pop("result", None)
+                started = data.get("started_at")
+                if started:
+                    data["elapsed_seconds"] = round(self._now() - started, 1)
+                return data
         return latest_ai_decision.load()
 
     def clear_latest(self):
