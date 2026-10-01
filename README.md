@@ -366,7 +366,6 @@ Portfolio Position P&L sums valid USD `position.pl_val` values, matching the app
 
 Quant outputs preserve factor ranking and add dated account funds and per-candidate whole-share affordability/risk annotations. AI context includes current funds, P&L semantics and sources. Proposal generation reserves available funds across BUY proposals; pending SELL proceeds do not increase verified funds. Fresh manual/AI execution revalidates against the active account and broker cash-only maximum quantity. Regenerate existing quant/AI runs after deployment.
 
-Screenshot regression fixture: USD net assets 1806.27, US position market values 332.50 + 1072.00 + 151.20 + 172.50 = 1728.20, cash difference 78.07; position P&L -1.90 + 139.90 -3.18 + 0.90 = 135.72. The subsequent Assets screenshot confirms USD cash, withdrawable cash and buying power are all 78.07; it shows 1805.22 assets, 1727.15 market value, 134.67 position P&L and 7.20 Today’s P&L at its later timestamp. Prices differ between screenshots taken at different times.
 
 ## Chart history correctness
 

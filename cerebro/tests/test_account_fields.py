@@ -10,23 +10,23 @@ from app.services.account_fields import securities_funds, position_pnl
 
 
 class FundsTests(unittest.TestCase):
-    def test_screenshot_reconciliation(self):
-        funds = securities_funds(dict(usd_assets=1806.27, us_cash=78.07,
-                                      usd_net_cash_power=78.07, market_val=1728.20,
+    def test_synthetic_account_reconciliation(self):
+        funds = securities_funds(dict(usd_assets=1200.00, us_cash=200.00,
+                                      usd_net_cash_power=200.00, market_val=1000.00,
                                       power=5000, available_funds=9999))
         self.assertAlmostEqual(funds['total_value'], funds['cash'] + funds['market_value'])
-        self.assertEqual(funds['available_cash'], 78.07)
+        self.assertEqual(funds['available_cash'], 200.00)
         rows = [dict(profit_loss=p, unrealized_pnl=p, today_pnl=t)
-                for p, t in [(-1.90, -.52), (139.90, 6.89), (-3.18, .34), (.90, 1.54)]]
+                for p, t in [(-10, -1), (80, 8), (-25, -3), (5, 1)]]
         pnl = position_pnl(rows)
-        self.assertEqual(pnl['position_pnl'], 135.72)
-        self.assertEqual(pnl['unrealized_pnl'], 135.72)
-        self.assertEqual(pnl['today_position_pnl'], 8.25)
+        self.assertEqual(pnl['position_pnl'], 50.00)
+        self.assertEqual(pnl['unrealized_pnl'], 50.00)
+        self.assertEqual(pnl['today_position_pnl'], 5.00)
         self.assertIsNone(pnl['realized_pnl'])
 
     def test_zero_missing_and_margin(self):
-        for power, expected in [(0, 0), (20, 20), (2000, 78.07), (-1, 0), (None, None), (float('nan'), None)]:
-            self.assertEqual(securities_funds(dict(us_cash=78.07, usd_net_cash_power=power))['available_cash'], expected)
+        for power, expected in [(0, 0), (20, 20), (2000, 200.00), (-1, 0), (None, None), (float('nan'), None)]:
+            self.assertEqual(securities_funds(dict(us_cash=200.00, usd_net_cash_power=power))['available_cash'], expected)
         self.assertIsNone(position_pnl([dict(profit_loss=None)])['position_pnl'])
         self.assertIsNone(position_pnl([dict(profit_loss=10)])['unrealized_pnl'])
 
@@ -40,11 +40,11 @@ class FundsTests(unittest.TestCase):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         args = dict(trading_enabled=True, mode='LIVE', symbol='US.AAPL', side='BUY', quantity=1,
-                    estimated_price=30, portfolio_total=1806.27, portfolio_cash=78.07,
-                    portfolio_market_value=1728.20, current_position_value=0)
-        for available, approved in [(20, False), (78.07, True), (None, False), (0, False)]:
+                    estimated_price=30, portfolio_total=1200.00, portfolio_cash=200.00,
+                    portfolio_market_value=1000.00, current_position_value=0)
+        for available, approved in [(20, False), (200.00, True), (None, False), (0, False)]:
             self.assertEqual(module.risk.evaluate_order(**args, portfolio_available_cash=available)['approved'], approved)
-        result = module.risk.evaluate_order(**args, portfolio_available_cash=78.07, daily_equity_pnl=-11, realized_pnl=500)
+        result = module.risk.evaluate_order(**args, portfolio_available_cash=200.00, daily_equity_pnl=-11, realized_pnl=500)
         self.assertFalse(result['approved'])
         self.assertTrue(any(c['name']=='daily_equity_loss_guard' and not c['passed'] for c in result['risk_checks']))
 
