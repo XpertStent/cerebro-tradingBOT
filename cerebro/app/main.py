@@ -8,9 +8,9 @@ from app.api.portfolio import router as portfolio_router
 from app.api.orders import router as orders_router
 from app.api.markets import router as markets_router
 from app.api.activity import router as activity_router
-from app.api.strategies import router as strategies_router
 from app.api.watchlist import router as watchlist_router
 from app.api.ai_memory import router as ai_memory_router
+from app.api.ai_decision import router as ai_decision_router
 from app.api.scanner import router as scanner_router
 from app.api.metrics import router as metrics_router
 from app.api.quant_screener import router as quant_screener_router
@@ -24,7 +24,7 @@ NAME = config["cerebro"]["name"]
 app = FastAPI(
     title="Cerebro",
     description="Trading bot control and market-data API",
-    version="0.3.0"
+    version="0.5.0"
 )
 
 
@@ -33,9 +33,9 @@ app.include_router(portfolio_router)
 app.include_router(orders_router)
 app.include_router(markets_router)
 app.include_router(activity_router)
-app.include_router(strategies_router)
 app.include_router(watchlist_router)
 app.include_router(ai_memory_router)
+app.include_router(ai_decision_router)
 app.include_router(scanner_router)
 app.include_router(metrics_router)
 app.include_router(quant_screener_router)
@@ -47,7 +47,7 @@ app.include_router(settings_router)
 def root():
     return {
         "service": NAME,
-        "version": "0.3.0",
+        "version": "0.5.0",
         "status_endpoint": "/system/status",
         "documentation": "/docs"
     }

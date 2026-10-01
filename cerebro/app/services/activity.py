@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -9,23 +10,13 @@ _lock = threading.Lock()
 
 
 class ActivityLog:
-
     def __init__(self):
-        DB_PATH.parent.mkdir(
-            parents=True,
-            exist_ok=True
-        )
-
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _connect(self):
-        conn = sqlite3.connect(
-            DB_PATH,
-            timeout=10
-        )
-
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         conn.row_factory = sqlite3.Row
-
         return conn
 
     def _init_db(self):
@@ -43,18 +34,9 @@ class ActivityLog:
                     details TEXT
                 )
             """)
-
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS
-                idx_activity_timestamp
-                ON activity(timestamp DESC)
-            """)
-
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS
-                idx_activity_category
-                ON activity(category)
-            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity(timestamp DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_category ON activity(category)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_level ON activity(level)")
 
     def write(
         self,
@@ -65,41 +47,32 @@ class ActivityLog:
         level: str = "INFO",
         symbol: str | None = None,
         order_id: str | None = None,
-        details: str | None = None
+        details=None,
     ):
-        timestamp = (
-            datetime.now(timezone.utc)
-            .isoformat()
-        )
+        timestamp = datetime.now(timezone.utc).isoformat()
+        if details is not None and not isinstance(details, str):
+            details = json.dumps(details, ensure_ascii=False, default=str)
 
         with _lock:
             with self._connect() as conn:
                 cursor = conn.execute(
                     """
                     INSERT INTO activity (
-                        timestamp,
-                        category,
-                        level,
-                        action,
-                        message,
-                        symbol,
-                        order_id,
-                        details
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        timestamp, category, level, action, message,
+                        symbol, order_id, details
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         timestamp,
-                        category.upper(),
-                        level.upper(),
-                        action,
-                        message,
+                        str(category or "SYSTEM").upper(),
+                        str(level or "INFO").upper(),
+                        str(action or "EVENT"),
+                        str(message or ""),
                         symbol,
-                        order_id,
-                        details
-                    )
+                        str(order_id) if order_id is not None else None,
+                        details,
+                    ),
                 )
-
                 return cursor.lastrowid
 
     def list(
@@ -108,61 +81,33 @@ class ActivityLog:
         limit: int = 100,
         category: str | None = None,
         level: str | None = None,
-        search: str | None = None
+        search: str | None = None,
     ):
-        sql = """
-            SELECT *
-            FROM activity
-            WHERE 1=1
-        """
-
+        sql = "SELECT * FROM activity WHERE 1=1"
         params = []
 
         if category:
             sql += " AND category = ?"
-            params.append(
-                category.upper()
-            )
-
+            params.append(category.upper())
         if level:
             sql += " AND level = ?"
-            params.append(
-                level.upper()
-            )
-
+            params.append(level.upper())
         if search:
+            q = f"%{search.strip()}%"
             sql += """
                 AND (
-                    message LIKE ?
-                    OR action LIKE ?
-                    OR symbol LIKE ?
-                    OR order_id LIKE ?
+                    category LIKE ? OR level LIKE ? OR action LIKE ?
+                    OR message LIKE ? OR symbol LIKE ? OR order_id LIKE ?
+                    OR details LIKE ?
                 )
             """
+            params.extend([q] * 7)
 
-            q = f"%{search}%"
-
-            params.extend([
-                q, q, q, q
-            ])
-
-        sql += """
-            ORDER BY id DESC
-            LIMIT ?
-        """
-
+        sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
-
         with self._connect() as conn:
-            rows = conn.execute(
-                sql,
-                params
-            ).fetchall()
-
-        return [
-            dict(row)
-            for row in rows
-        ]
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
 
 
 activity = ActivityLog()

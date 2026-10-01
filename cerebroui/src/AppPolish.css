@@ -1,0 +1,371 @@
+html, body, #root {
+  min-height: 100%;
+}
+
+body {
+  overflow-y: scroll;
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+main,
+.dashboardSections,
+.watchlistPage,
+.activityPage,
+.ordersPage,
+.portfolioPage,
+.aiEnginePage,
+.marketsPage,
+.settingsPage {
+  min-width: 0;
+}
+
+.brandButton {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.orderButton {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Nested result panes scroll themselves, then naturally hand wheel scrolling
+   back to the page when their top/bottom edge is reached. */
+.scrollRegion,
+.ordersScrollable {
+  max-height: min(68vh, 780px);
+  overflow: auto;
+  overscroll-behavior: auto;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
+}
+
+.scrollRegion.compact {
+  max-height: min(50vh, 520px);
+}
+
+.watchlistSearchBar,
+.activityToolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.watchlistSearchShell {
+  position: relative;
+  flex: 1 1 420px;
+  min-width: 220px;
+}
+
+.watchlistSearchInput {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #dce3ec;
+  border-radius: 10px;
+  background: #fff;
+  padding: 0 12px;
+  min-height: 44px;
+}
+
+.watchlistSearchInput input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.watchlistSearchButton,
+.watchlistRefresh,
+.activityRefresh,
+.activitySearchButton,
+.activityLinkButton,
+.activityExpandButton,
+.watchlistResultAction,
+.watchlistActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  border-radius: 9px;
+  border: 1px solid #dce3ec;
+  background: #fff;
+  color: #172033;
+  padding: 0 13px;
+  cursor: pointer;
+}
+
+.watchlistSearchButton,
+.activitySearchButton {
+  background: #111827;
+  color: #fff;
+  border-color: #111827;
+  font-weight: 700;
+}
+
+.watchlistSearchButton:disabled,
+.watchlistRefresh:disabled,
+.activityRefresh:disabled,
+.activityExpandButton:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.watchlistResults {
+  position: absolute;
+  z-index: 25;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  max-height: 360px;
+  overflow: auto;
+  overscroll-behavior: auto;
+  border: 1px solid #dce3ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, .14);
+}
+
+.watchlistResultRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 12px;
+  border-bottom: 1px solid #edf1f5;
+}
+
+.watchlistResultRow:last-child { border-bottom: 0; }
+.watchlistResultIdentity { min-width: 0; cursor: pointer; }
+.watchlistResultIdentity strong,
+.watchlistResultIdentity span { display: block; }
+.watchlistResultIdentity span {
+  color: #748094;
+  font-size: 13px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.watchlistResultAction {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.watchlistSearchHint,
+.watchlistError,
+.activityError {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.watchlistSearchHint { color: #748094; }
+.watchlistError,
+.activityError { color: #b91c1c; }
+
+.watchlistRow {
+  grid-template-columns: minmax(150px, 1.15fr) minmax(130px, .75fr) minmax(120px, .8fr) minmax(220px, 1.65fr) auto !important;
+  align-items: center;
+}
+
+.symbolCellButton {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.watchlistQuote { min-width: 132px; text-align: right; }
+.watchlistQuote strong { display: block; color: #172033; font-size: 16px; }
+.watchlistQuote span { display: block; margin-top: 3px; font-size: 12px; font-weight: 700; }
+.marketMove.positive { color: #15803d; }
+.marketMove.negative { color: #b91c1c; }
+.marketMove.flat { color: #64748b; }
+.watchlistUpdated { display: block; margin-top: 2px; color: #94a3b8; font-size: 11px; font-weight: 400; }
+
+.activityToolbar { margin-bottom: 16px; }
+.activitySearch { flex: 1 1 360px; min-width: 220px; }
+.activityHeaderActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.activityExpandButton { min-height: 36px; }
+
+/* style.css historically made .activityEvent a two-column grid. That worked for
+   the old div markup, but a <details> element then placed its summary into the
+   12px grid column and rendered the message one character per line. Reset the
+   event container here and let the summary own its internal layout. */
+.activityTimeline .activityEvent {
+  display: block !important;
+  grid-template-columns: none !important;
+  width: 100%;
+  min-width: 0;
+  padding: 0 0 14px 0;
+}
+
+.activityTimeline .activityEvent:not(:last-child)::before {
+  display: none;
+}
+
+.activityEventClickable {
+  cursor: pointer;
+  width: 100%;
+}
+
+.activityEventClickable > summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 2px;
+  list-style: none;
+}
+
+.activityEventClickable > summary::-webkit-details-marker { display: none; }
+.activityEventClickable[open] { background: #fbfdff; }
+.activityEventBody { flex: 1 1 auto; min-width: 0; width: auto; }
+.activityEventTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; min-width: 0; }
+.activityEventTitle { flex: 1 1 auto; min-width: 0; }
+.activityEventTitle strong { display: block; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+.activityEventTop time { flex: 0 0 auto; white-space: nowrap; }
+.activityMeta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.activityTimeline .activityDot { flex: 0 0 9px; }
+
+.activityEventDetails {
+  margin: 0 0 6px 22px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e7edf4;
+  border-radius: 10px;
+}
+
+.activityEventDetailsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.activityEventDetailsGrid div { min-width: 0; }
+.activityEventDetailsGrid span { display: block; color: #94a3b8; text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
+.activityEventDetailsGrid strong { display: block; margin-top: 2px; color: #172033; word-break: break-word; }
+
+.activityDetailsPre {
+  margin: 10px 0 0;
+  padding: 10px;
+  max-height: 360px;
+  overflow: auto;
+  overscroll-behavior: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+}
+
+.activityDeepLinks { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.activityLinkButton { min-height: 34px; padding: 0 10px; color: #1d4ed8; }
+
+.tableScroll,
+.aiQuantTableWrap,
+.ordersTableWrap {
+  width: 100%;
+  overflow-x: auto;
+  overscroll-behavior: auto;
+}
+
+@media (max-width: 1050px) {
+  .watchlistRow {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: 10px;
+  }
+  .watchlistQuote { text-align: right; }
+  .watchlistReason,
+  .watchlistTags { grid-column: 1 / -1; }
+}
+
+/* Base style.css intentionally collapses the two-column shell at tablet width.
+   Keep navigation available as a horizontal, scrollable app bar instead of
+   hiding the sidebar completely. */
+@media (max-width: 900px) {
+  .app { display: block; }
+
+  .sidebar {
+    display: flex !important;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    width: 100%;
+    padding: 10px 12px;
+    gap: 8px;
+    border-bottom: 1px solid #273244;
+  }
+
+  .sidebar .brand { padding: 2px 6px 8px; }
+  .sidebar .brand span,
+  .sidebarStatus { display: none; }
+
+  .sidebar nav {
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    overscroll-behavior-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .sidebar nav button {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 42px;
+    white-space: nowrap;
+  }
+
+  main { padding: 20px 18px 28px; }
+  header { align-items: flex-start; gap: 12px; }
+}
+
+@media (max-width: 640px) {
+  .watchlistSearchBar > button,
+  .activityToolbar > button,
+  .activityToolbar select { flex: 1 1 auto; }
+  .watchlistResultRow { grid-template-columns: 1fr; }
+  .watchlistResultAction { justify-self: start; }
+  .watchlistQuote { text-align: left; }
+  .activityEventTop { flex-direction: column; gap: 5px; }
+  .activityEventDetails { margin-left: 0; }
+  .activityHeaderActions { justify-content: flex-start; }
+  main { padding: 16px 12px 24px; }
+  header { flex-direction: column; margin-bottom: 18px; }
+  header h1 { font-size: 24px; }
+  .statusGrid,
+  .metricGrid,
+  .lowerGrid { grid-template-columns: 1fr; }
+}

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from moomoo import ModifyOrderOp, RET_OK, TrdEnv
 
 from app.services.trading import trading
 from app.services.opend import opend
@@ -22,6 +23,16 @@ class OrderRequest(BaseModel):
     price: float | None = None
 
 
+TERMINAL_ORDER_STATES = {
+    "FILLED_ALL",
+    "CANCELLED_ALL",
+    "CANCELED_ALL",
+    "FAILED",
+    "DISABLED",
+    "DELETED",
+}
+
+
 @router.get("/")
 def orders():
     try:
@@ -31,10 +42,72 @@ def orders():
             "orders": data
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=503,
-            detail=str(e)
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.delete("/{order_id}")
+def cancel_pending_order(order_id: str):
+    """Cancel a non-terminal PAPER order reported by OpenD."""
+    try:
+        if str(settings.get("trading.mode")).lower() != "paper":
+            raise HTTPException(
+                status_code=403,
+                detail="Live-order cancellation is not implemented",
+            )
+
+        existing = next(
+            (
+                item for item in trading.get_orders()
+                if str(item.get("order_id")) == str(order_id)
+            ),
+            None,
         )
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Order not found")
+
+        status = str(existing.get("status") or "").upper()
+        if status in TERMINAL_ORDER_STATES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Order is already terminal ({status})",
+            )
+
+        account_id = trading._paper_account_id()
+        ctx = trading._context()
+        try:
+            ret, data = ctx.modify_order(
+                modify_order_op=ModifyOrderOp.CANCEL,
+                order_id=str(order_id),
+                qty=0,
+                price=0,
+                trd_env=TrdEnv.SIMULATE,
+                acc_id=account_id,
+            )
+        finally:
+            ctx.close()
+
+        if ret != RET_OK:
+            raise RuntimeError(str(data))
+
+        trading.clear_cache()
+        activity.write(
+            category="ORDER",
+            action="ORDER_CANCELLED",
+            message=f"Cancelled pending PAPER order {order_id}",
+            symbol=existing.get("symbol"),
+            order_id=str(order_id),
+        )
+
+        return {
+            "cancelled": True,
+            "order_id": str(order_id),
+            "previous_status": status,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def build_preview(order: OrderRequest):
@@ -42,25 +115,15 @@ def build_preview(order: OrderRequest):
     order_type = order.order_type.upper()
 
     if side not in ("BUY", "SELL"):
-        raise HTTPException(
-            status_code=400,
-            detail="side must be BUY or SELL"
-        )
+        raise HTTPException(status_code=400, detail="side must be BUY or SELL")
 
     if order_type not in ("MARKET", "LIMIT"):
-        raise HTTPException(
-            status_code=400,
-            detail="order_type must be MARKET or LIMIT"
-        )
+        raise HTTPException(status_code=400, detail="order_type must be MARKET or LIMIT")
 
     if order_type == "LIMIT" and order.price is None:
-        raise HTTPException(
-            status_code=400,
-            detail="LIMIT order requires price"
-        )
+        raise HTTPException(status_code=400, detail="LIMIT order requires price")
 
     quote = opend.get_snapshot(order.symbol)
-
     estimated_price = (
         float(order.price)
         if order_type == "LIMIT"
@@ -75,10 +138,8 @@ def build_preview(order: OrderRequest):
         quantity=order.quantity,
         estimated_price=estimated_price
     )
-
     result["order_type"] = order_type
     result["requested_price"] = order.price
-
     return result
 
 
@@ -86,32 +147,20 @@ def build_preview(order: OrderRequest):
 def preview_order(order: OrderRequest):
     try:
         result = build_preview(order)
-
         activity.write(
             category="ORDER",
             action="ORDER_PREVIEW",
             message=(
-                f"Previewed {result['side']} "
-                f"{result['quantity']} "
-                f"{result['symbol']} "
-                f"for approximately "
+                f"Previewed {result['side']} {result['quantity']} "
+                f"{result['symbol']} for approximately "
                 f"${result['estimated_value']:,.2f}"
             ),
             symbol=result["symbol"]
         )
-
         activity.write(
             category="RISK",
-            action=(
-                "RISK_APPROVED"
-                if result["approved"]
-                else "RISK_BLOCKED"
-            ),
-            level=(
-                "INFO"
-                if result["approved"]
-                else "WARN"
-            ),
+            action="RISK_APPROVED" if result["approved"] else "RISK_BLOCKED",
+            level="INFO" if result["approved"] else "WARN",
             message=(
                 "Order approved by risk engine"
                 if result["approved"]
@@ -119,17 +168,11 @@ def preview_order(order: OrderRequest):
             ),
             symbol=result["symbol"]
         )
-
         return result
-
     except HTTPException:
         raise
-
     except Exception as e:
-        raise HTTPException(
-            status_code=503,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.post("/execute")
@@ -142,7 +185,6 @@ def execute_order(order: OrderRequest):
             )
 
         preview = build_preview(order)
-
         if not preview["approved"]:
             raise HTTPException(
                 status_code=403,
@@ -164,23 +206,18 @@ def execute_order(order: OrderRequest):
             category="ORDER",
             action="ORDER_SUBMITTED",
             message=(
-                f"Submitted PAPER "
-                f"{preview['side']} "
-                f"{preview['quantity']} "
-                f"{preview['symbol']}"
+                f"Submitted PAPER {preview['side']} "
+                f"{preview['quantity']} {preview['symbol']}"
             ),
             symbol=preview["symbol"],
             order_id=str(result.get("order_id", ""))
         )
-
         activity.write(
             category="BROKER",
             action="ORDER_ACCEPTED",
             message=(
-                f"OpenD accepted order "
-                f"{result.get('order_id')} "
-                f"with status "
-                f"{result.get('status')}"
+                f"OpenD accepted order {result.get('order_id')} "
+                f"with status {result.get('status')}"
             ),
             symbol=preview["symbol"],
             order_id=str(result.get("order_id", ""))
@@ -195,9 +232,5 @@ def execute_order(order: OrderRequest):
 
     except HTTPException:
         raise
-
     except Exception as e:
-        raise HTTPException(
-            status_code=503,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=503, detail=str(e))

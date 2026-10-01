@@ -1,0 +1,104 @@
+.collapsibleSection {
+  background: #fff;
+  border: 1px solid #e3e8ef;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.dashboardSections,
+.portfolioPage,
+.watchlistPage,
+.activityPage,
+.ordersPage {
+  display: grid;
+  gap: 18px;
+}
+
+.collapsibleHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #edf1f5;
+}
+
+.collapsibleToggle {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.collapsibleToggle h2 {
+  margin: 0;
+  color: #172033;
+  font-size: 20px;
+}
+
+.collapsibleToggle p {
+  margin: 4px 0 0;
+  color: #748094;
+  font-size: 13px;
+}
+
+.collapsibleChevron {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: #64748b;
+  transform: rotate(-90deg);
+  transition: transform .16s ease;
+}
+
+.collapsibleChevron.open {
+  transform: rotate(0deg);
+}
+
+.collapsibleActions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.collapsibleBody {
+  padding: 16px 18px 18px;
+}
+
+.scrollRegion {
+  overflow: auto;
+  max-height: min(58vh, 640px);
+  scrollbar-gutter: stable;
+}
+
+.scrollRegion.compact {
+  max-height: 420px;
+}
+
+.scrollRegion table {
+  min-width: max-content;
+}
+
+@media (max-width: 760px) {
+  .collapsibleHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .collapsibleActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .collapsibleBody {
+    padding: 14px;
+  }
+}

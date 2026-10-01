@@ -16,6 +16,7 @@ VALID_ACTIONS = {
     "REDUCE",
     "SELL",
     "WATCH",
+    "IGNORE",
 }
 
 VALID_EXECUTION_STATUSES = {

@@ -1,329 +1,225 @@
-import React, {
-  useEffect,
-  useState
-} from "react";
-
+import React, { useEffect, useMemo, useState } from "react";
 import {
+  Activity as ActivityIcon,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  ExternalLink,
   RefreshCw,
-  Search,
-  Activity as ActivityIcon
+  Search
 } from "lucide-react";
+import CollapsibleSection from "./CollapsibleSection";
 
+const BASE_CATEGORIES = ["ORDER", "RISK", "BROKER", "MARKET", "SYSTEM", "STRATEGY", "AI"];
 
-const CATEGORIES = [
-  "",
-  "ORDER",
-  "RISK",
-  "BROKER",
-  "MARKET",
-  "SYSTEM",
-  "STRATEGY",
-  "AI"
-];
+function localTime(value) {
+  return value ? new Date(value).toLocaleString() : "—";
+}
 
+function formatDetails(value) {
+  if (!value) return null;
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch (_) {
+    return value;
+  }
+}
 
 export default function Activity() {
+  const [events, setEvents] = useState([]);
+  const [category, setCategory] = useState("");
+  const [level, setLevel] = useState("");
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
 
-  const [events, setEvents] =
-    useState([]);
+  const categories = useMemo(() => {
+    const dynamic = events.map(item => item.category).filter(Boolean);
+    return Array.from(new Set([...BASE_CATEGORIES, ...dynamic])).sort();
+  }, [events]);
 
-  const [category, setCategory] =
-    useState("");
-
-  const [level, setLevel] =
-    useState("");
-
-  const [search, setSearch] =
-    useState("");
-
-  const [loading, setLoading] =
-    useState(false);
-
-
-  async function loadActivity() {
-
-    setLoading(true);
-
+  async function loadActivity({ silent = false } = {}) {
+    if (!silent) setLoading(true);
     try {
-
-      const params =
-        new URLSearchParams({
-          limit: "250"
-        });
-
-      if (category)
-        params.set(
-          "category",
-          category
-        );
-
-      if (level)
-        params.set(
-          "level",
-          level
-        );
-
-      if (search.trim())
-        params.set(
-          "search",
-          search.trim()
-        );
-
-
-      const r = await fetch(
-        `/api/activity/?${params}`,
-        {
-          cache: "no-store"
-        }
-      );
-
-      const d =
-        await r.json();
-
-      if (r.ok) {
-        setEvents(
-          d.events || []
-        );
-      }
-
+      const params = new URLSearchParams({ limit: "500" });
+      if (category) params.set("category", category);
+      if (level) params.set("level", level);
+      if (search.trim()) params.set("search", search.trim());
+      const r = await fetch(`/api/activity/?${params}`, { cache: "no-store" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || `Activity failed (${r.status})`);
+      setEvents(d.events || []);
+      setExpandedIds(previous => {
+        const valid = new Set((d.events || []).map(item => item.id));
+        return new Set([...previous].filter(id => valid.has(id)));
+      });
+      setError(null);
+    } catch (e) {
+      setError(e.message || "Could not load activity.");
     } finally {
-
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
-
   useEffect(() => {
-
     loadActivity();
+    const timer = setInterval(() => loadActivity({ silent: true }), 5000);
+    return () => clearInterval(timer);
+  }, [category, level]);
 
-    const timer =
-      setInterval(
-        loadActivity,
-        5000
-      );
-
-    return () =>
-      clearInterval(timer);
-
-  }, [
-    category,
-    level
-  ]);
-
-
-  function localTime(value) {
-
-    if (!value)
-      return "—";
-
-    return new Date(value)
-      .toLocaleString();
+  function setEventOpen(id, open) {
+    setExpandedIds(previous => {
+      const next = new Set(previous);
+      if (open) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   }
 
+  function expandAll() {
+    setExpandedIds(new Set(events.map(event => event.id)));
+  }
+
+  function collapseAll() {
+    setExpandedIds(new Set());
+  }
+
+  function openSymbol(event) {
+    if (!event.symbol) return;
+    window.dispatchEvent(new CustomEvent("cerebro-open-market", {
+      detail: { symbol: event.symbol, name: "" }
+    }));
+  }
+
+  function openOrders(orderId) {
+    if (orderId) sessionStorage.setItem("cerebro.orders.focus", String(orderId));
+    window.dispatchEvent(new CustomEvent("cerebro-navigate", { detail: { page: "Orders" } }));
+  }
+
+  const allExpanded = events.length > 0 && expandedIds.size === events.length;
 
   return (
     <div className="activityPage">
-
       <div className="activityToolbar">
-
         <div className="activitySearch">
-
           <Search size={16}/>
-
           <input
             value={search}
-            onChange={e =>
-              setSearch(
-                e.target.value
-              )
-            }
-            onKeyDown={e => {
-              if (e.key === "Enter")
-                loadActivity();
-            }}
-            placeholder="Search activity"
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") loadActivity(); }}
+            placeholder="Search message, action, symbol, order or details"
           />
-
         </div>
-
-
-        <select
-          value={category}
-          onChange={e =>
-            setCategory(
-              e.target.value
-            )
-          }
-        >
-
-          {CATEGORIES.map(item => (
-
-            <option
-              key={item || "ALL"}
-              value={item}
-            >
-              {item || "All categories"}
-            </option>
-
-          ))}
-
-        </select>
-
-
-        <select
-          value={level}
-          onChange={e =>
-            setLevel(
-              e.target.value
-            )
-          }
-        >
-
-          <option value="">
-            All levels
-          </option>
-
-          <option value="INFO">
-            Info
-          </option>
-
-          <option value="WARN">
-            Warning
-          </option>
-
-          <option value="ERROR">
-            Error
-          </option>
-
-        </select>
-
-
-        <button
-          onClick={loadActivity}
-          className="activityRefresh"
-        >
-          <RefreshCw size={15}/>
-          Refresh
+        <button className="activitySearchButton" onClick={() => loadActivity()} disabled={loading}>
+          <Search size={15}/>
+          Search
         </button>
 
+        <select value={category} onChange={e => setCategory(e.target.value)}>
+          <option value="">All categories</option>
+          {categories.map(item => <option key={item} value={item}>{item}</option>)}
+        </select>
+
+        <select value={level} onChange={e => setLevel(e.target.value)}>
+          <option value="">All levels</option>
+          <option value="INFO">Info</option>
+          <option value="WARN">Warning</option>
+          <option value="ERROR">Error</option>
+        </select>
       </div>
 
+      {error && <div className="activityError">{error}</div>}
 
-      <section className="activityPanel">
-
-        <div className="activityHeader">
-
-          <div>
-
-            <h2>
-              Activity Timeline
-            </h2>
-
-            <p>
-              Persistent Cerebro audit trail.
-            </p>
-
+      <CollapsibleSection
+        title="Activity Timeline"
+        subtitle="Persistent Cerebro audit trail. Events stay collapsed until you open the one you want."
+        actions={
+          <div className="activityHeaderActions">
+            <span>{events.length} events</span>
+            <button
+              type="button"
+              className="activityExpandButton"
+              onClick={allExpanded ? collapseAll : expandAll}
+              disabled={events.length === 0}
+            >
+              {allExpanded ? <ChevronsDownUp size={15}/> : <ChevronsUpDown size={15}/>}
+              {allExpanded ? "Collapse all" : "Expand all"}
+            </button>
+            <button onClick={() => loadActivity()} className="activityRefresh" disabled={loading}>
+              <RefreshCw size={15}/>
+              {loading ? "Loading…" : "Refresh"}
+            </button>
           </div>
-
-
-          <span>
-            {events.length} events
-          </span>
-
-        </div>
-
-
+        }
+        bodyClassName="scrollRegion"
+      >
         <div className="activityTimeline">
-
           {events.length === 0 ? (
-
             <div className="activityEmpty">
-
               <ActivityIcon size={28}/>
-
-              <p>
-                No activity recorded yet.
-              </p>
-
+              <p>No activity matches the current filters.</p>
             </div>
-
           ) : (
+            events.map(event => {
+              const details = formatDetails(event.details);
+              return (
+                <details
+                  className="activityEvent activityEventClickable"
+                  key={event.id}
+                  open={expandedIds.has(event.id)}
+                  onToggle={e => setEventOpen(event.id, e.currentTarget.open)}
+                >
+                  <summary>
+                    <div className={`activityDot ${String(event.level || "info").toLowerCase()}`}/>
+                    <div className="activityEventBody">
+                      <div className="activityEventTop">
+                        <div className="activityEventTitle">
+                          <span className="activityCategory">{event.category}</span>
+                          <strong>{event.message}</strong>
+                        </div>
+                        <time>{localTime(event.timestamp)}</time>
+                      </div>
+                      <div className="activityMeta">
+                        <span>{event.action}</span>
+                        <span>{event.level}</span>
+                        {event.symbol && <span>{event.symbol}</span>}
+                        {event.order_id && <span>Order {event.order_id}</span>}
+                      </div>
+                    </div>
+                  </summary>
 
-            events.map(event => (
-
-              <div
-                className="activityEvent"
-                key={event.id}
-              >
-
-                <div
-                  className={
-                    `activityDot ${
-                      event.level.toLowerCase()
-                    }`
-                  }
-                />
-
-
-                <div className="activityEventBody">
-
-                  <div className="activityEventTop">
-
-                    <div>
-
-                      <span className="activityCategory">
-                        {event.category}
-                      </span>
-
-                      <strong>
-                        {event.message}
-                      </strong>
-
+                  <div className="activityEventDetails">
+                    <div className="activityEventDetailsGrid">
+                      <div><span>Event ID</span><strong>{event.id}</strong></div>
+                      <div><span>Category</span><strong>{event.category}</strong></div>
+                      <div><span>Action</span><strong>{event.action}</strong></div>
+                      <div><span>Level</span><strong>{event.level}</strong></div>
+                      <div><span>Timestamp</span><strong>{localTime(event.timestamp)}</strong></div>
+                      {event.symbol && <div><span>Symbol</span><strong>{event.symbol}</strong></div>}
+                      {event.order_id && <div><span>Order ID</span><strong>{event.order_id}</strong></div>}
                     </div>
 
-
-                    <time>
-                      {localTime(
-                        event.timestamp
+                    <div className="activityDeepLinks">
+                      {event.symbol && (
+                        <button className="activityLinkButton" onClick={() => openSymbol(event)}>
+                          <ExternalLink size={13}/> Open {event.symbol} in Markets
+                        </button>
                       )}
-                    </time>
+                      {event.order_id && (
+                        <button className="activityLinkButton" onClick={() => openOrders(event.order_id)}>
+                          <ExternalLink size={13}/> Open Orders
+                        </button>
+                      )}
+                    </div>
 
+                    {details && <pre className="activityDetailsPre">{details}</pre>}
                   </div>
-
-
-                  <div className="activityMeta">
-
-                    <span>
-                      {event.action}
-                    </span>
-
-                    {event.symbol && (
-                      <span>
-                        {event.symbol}
-                      </span>
-                    )}
-
-                    {event.order_id && (
-                      <span>
-                        Order {event.order_id}
-                      </span>
-                    )}
-
-                  </div>
-
-                </div>
-
-              </div>
-
-            ))
-
+                </details>
+              );
+            })
           )}
-
         </div>
-
-      </section>
-
+      </CollapsibleSection>
     </div>
   );
 }

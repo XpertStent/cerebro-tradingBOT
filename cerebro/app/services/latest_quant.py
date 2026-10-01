@@ -35,10 +35,6 @@ class LatestQuantStore:
             "result": result,
         }
 
-        #
-        # Atomic write:
-        # never leave a half-written quant file.
-        #
         fd, temp_path = tempfile.mkstemp(
             prefix="latest_quant_",
             suffix=".json",
@@ -118,6 +114,13 @@ class LatestQuantStore:
             for item in candidates
             if isinstance(item, dict)
         ]
+
+    def delete(self):
+        try:
+            self.path.unlink()
+            return True
+        except FileNotFoundError:
+            return False
 
 
 latest_quant = LatestQuantStore()
