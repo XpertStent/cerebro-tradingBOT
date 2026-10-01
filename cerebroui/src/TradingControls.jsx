@@ -3,18 +3,28 @@ import { LockKeyhole, RefreshCw, ShieldAlert, Unlock, X } from "lucide-react";
 import "./LiveTrading.css";
 
 
-export async function brokerAction(url, options = {}) {
-  const first = await fetch(url, options);
-  if (first.status !== 423) return first;
+const nativeFetch = window.fetch.bind(window);
 
-  return new Promise(resolve => {
-    window.dispatchEvent(new CustomEvent("cerebro-unlock-required", {
-      detail: {
-        retry: async () => resolve(await fetch(url, options)),
-        cancel: () => resolve(first),
-      },
-    }));
-  });
+if (!window.__cerebroUnlockInterceptorInstalled) {
+  window.__cerebroUnlockInterceptorInstalled = true;
+  window.fetch = async (...args) => {
+    const response = await nativeFetch(...args);
+    if (response.status !== 423) return response;
+
+    return new Promise(resolve => {
+      window.dispatchEvent(new CustomEvent("cerebro-unlock-required", {
+        detail: {
+          retry: async () => resolve(await nativeFetch(...args)),
+          cancel: () => resolve(response),
+        },
+      }));
+    });
+  };
+}
+
+
+export async function brokerAction(url, options = {}) {
+  return window.fetch(url, options);
 }
 
 
@@ -29,7 +39,7 @@ export default function TradingControls({ onStatus }) {
 
   async function load(refresh = false) {
     try {
-      const response = await fetch(refresh ? "/api/trading/accounts" : "/api/trading/status", { cache: "no-store" });
+      const response = await nativeFetch(refresh ? "/api/trading/accounts" : "/api/trading/status", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || `Trading status failed (${response.status})`);
 
@@ -68,7 +78,7 @@ export default function TradingControls({ onStatus }) {
 
   async function selectAccount() {
     if (!selected) throw new Error("Select the REAL account Cerebro should use.");
-    const response = await fetch("/api/trading/account", {
+    const response = await nativeFetch("/api/trading/account", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ account_id: selected }),
@@ -82,7 +92,7 @@ export default function TradingControls({ onStatus }) {
     setMessage(null);
     try {
       await selectAccount();
-      const response = await fetch("/api/trading/unlock", {
+      const response = await nativeFetch("/api/trading/unlock", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -106,7 +116,7 @@ export default function TradingControls({ onStatus }) {
   async function lock() {
     setBusy(true);
     try {
-      const response = await fetch("/api/trading/lock", { method: "POST" });
+      const response = await nativeFetch("/api/trading/lock", { method: "POST" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to lock trading");
       setStatus(data.status || { ...status, unlocked: false });
@@ -125,9 +135,7 @@ export default function TradingControls({ onStatus }) {
     setMessage(null);
   }
 
-  if (!status) {
-    return <span className="environmentBadge paper">TRADING…</span>;
-  }
+  if (!status) return <span className="environmentBadge paper">TRADING…</span>;
 
   return (
     <>
@@ -177,9 +185,7 @@ export default function TradingControls({ onStatus }) {
               </select>
             </label>
 
-            {accounts.length === 0 && (
-              <div className="unlockStatus error">No ACTIVE REAL account with US trading permission was discovered.</div>
-            )}
+            {accounts.length === 0 && <div className="unlockStatus error">No ACTIVE REAL account with US trading permission was discovered.</div>}
             {message && <div className={`unlockStatus ${message.kind}`}>{message.text}</div>}
 
             <div className="unlockActions">
