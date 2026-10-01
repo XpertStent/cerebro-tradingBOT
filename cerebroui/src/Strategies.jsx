@@ -11,7 +11,8 @@ import {
   Activity,
   DatabaseZap,
   Eraser,
-  SearchCheck
+  SearchCheck,
+  AlertTriangle
 } from "lucide-react";
 
 import "./AIEngine.css";
@@ -64,6 +65,7 @@ export default function Strategies() {
   const researchSymbols = progress?.ai?.research_symbols || {};
   const events = progress?.events || [];
   const decisionContext = bundle?.ai?.context || {};
+  const researchBatchCount = decisionContext?.run?.research_parallel_batches;
 
   const proposalBySymbol = useMemo(() => {
     const map = new Map();
@@ -78,6 +80,16 @@ export default function Strategies() {
     }
     return map;
   }, [decisionContext]);
+
+  const researchErrors = useMemo(() => (
+    (decisionContext?.candidates || [])
+      .filter(item => item?.research_context?.status === "ERROR")
+      .map(item => ({
+        symbol: item.symbol,
+        name: item.market_snapshot?.name || "",
+        error: item.research_context?.error || "Unknown research error"
+      }))
+  ), [decisionContext]);
 
   async function loadLatest() {
     try {
@@ -280,7 +292,7 @@ export default function Strategies() {
       <section className="aiHero">
         <div>
           <h2>AI Decision Engine</h2>
-          <p>Quant → research → decision model → deterministic risk → individual approval.</p>
+          <p>Quant → clustered research → decision model → deterministic risk → individual approval.</p>
         </div>
         <div className="aiHeroActions">
           <button className="aiPrimary" onClick={startManualRun} disabled={busy || running}>
@@ -330,9 +342,10 @@ export default function Strategies() {
           <div className="aiMetric"><span>AI Stage</span><strong>{progress?.ai?.stage || "—"}</strong></div>
           <div className="aiMetric"><span>AI Candidates</span><strong>{progress?.ai?.candidate_count ?? "—"}</strong></div>
           <div className="aiMetric"><span>Research</span><strong>{progress?.ai ? `${progress.ai.research_complete || 0}/${progress.ai.research_request_count || 0}` : "—"}</strong></div>
+          <div className="aiMetric"><span>Parallel Clusters</span><strong>{researchBatchCount ?? "Configured in Settings"}</strong></div>
           <div className="aiMetric"><span>In Flight</span><strong>{progress?.ai?.research_in_flight ?? "—"}</strong></div>
           <div className="aiMetric"><span>Research Ready</span><strong>{progress?.ai?.research_ready ?? "—"}</strong></div>
-          <div className="aiMetric"><span>Research Errors</span><strong>{progress?.ai?.research_errors ?? "—"}</strong></div>
+          <div className={`aiMetric ${Number(progress?.ai?.research_errors || 0) > 0 ? "metricError" : ""}`}><span>Research Errors</span><strong>{progress?.ai?.research_errors ?? "—"}</strong></div>
           <div className="aiMetric"><span>Latest Research</span><strong>{progress?.ai?.research_current_symbol || "—"}</strong></div>
           <div className="aiMetric"><span>Model Active</span><strong>{progress?.ai?.stage === "DECISION_MODEL" ? `Yes · ${fmtElapsed(progress?.ai?.model_elapsed_seconds)}` : "No"}</strong></div>
         </div>
@@ -374,7 +387,7 @@ export default function Strategies() {
 
       <CollapsibleSection
         title="Live Research Status"
-        subtitle="Rate-limit/transient failures are retried automatically before a symbol is marked ERROR."
+        subtitle="Symbols are grouped into the configured number of balanced parallel research/news requests. Transient failures are retried automatically."
         defaultOpen={running && progress?.stage === "RESEARCH_AND_CONTEXT"}
         bodyClassName="scrollRegion compact"
       >
@@ -392,6 +405,36 @@ export default function Strategies() {
           </div>
         )}
       </CollapsibleSection>
+
+      {researchErrors.length > 0 && (
+        <CollapsibleSection
+          title={`Research Errors (${researchErrors.length})`}
+          subtitle="Click an errored symbol to see the exact final error returned after automatic retries."
+          defaultOpen={true}
+          bodyClassName="scrollRegion compact"
+          actions={<AlertTriangle size={18}/>} 
+        >
+          <div className="researchErrorList">
+            {researchErrors.map(item => (
+              <details className="researchErrorCard" key={item.symbol}>
+                <summary>
+                  <div>
+                    <strong>{item.symbol}</strong>
+                    <span>{item.name || "Research request failed"}</span>
+                  </div>
+                  <span>View error</span>
+                </summary>
+                <div className="researchErrorBody">
+                  <pre>{item.error}</pre>
+                  <button className="aiSecondary" onClick={() => openMarket(item.symbol, item.name)}>
+                    Open {item.symbol} in Markets
+                  </button>
+                </div>
+              </details>
+            ))}
+          </div>
+        </CollapsibleSection>
+      )}
 
       {bundle?.ai?.decision && (
         <CollapsibleSection
