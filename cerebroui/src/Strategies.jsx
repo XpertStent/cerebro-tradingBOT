@@ -364,6 +364,17 @@ export default function Strategies() {
       ? "complete"
       : progress?.status ? "running" : "";
 
+  const bulkDecisionFooter = !autoExecuted && pendingCount > 0 && ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) ? (
+    <div className="aiPerDecisionActions aiBatchDecisionActions">
+      <button className="aiDanger" disabled={batchBusy || decisionBusyId != null} onClick={() => actAll("reject")}>
+        <XCircle size={15}/>{batchBusy ? "Working…" : `Reject All Remaining (${pendingCount})`}
+      </button>
+      <button className="aiPrimary" disabled={batchBusy || decisionBusyId != null} onClick={() => actAll("approve")}>
+        <CheckCircle2 size={15}/>{batchBusy ? "Working…" : `Approve All Remaining (${pendingCount})`}
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className="aiEnginePage">
       <section className="aiHero">
@@ -551,91 +562,79 @@ export default function Strategies() {
 
       <CollapsibleSection
         title="AI Decisions & Reasoning"
-        subtitle="Approve trades or monitoring actions individually, or resolve all remaining decisions together below."
+        subtitle="Approve trades or monitoring actions individually, or resolve all remaining decisions with the fixed controls below."
         actions={<DatabaseZap size={18}/>} 
         bodyClassName="scrollRegion"
+        footer={bulkDecisionFooter}
       >
         {decisions.length === 0 ? <div className="aiEmpty">No AI decision result yet.</div> : (
-          <>
-            <div className="aiDecisionList">
-              {decisions.map(item => {
-                const proposal = proposalBySymbol.get(item.symbol);
-                const candidate = candidateBySymbol.get(item.symbol);
-                const research = candidate?.research_context;
-                const researchStatus = research?.status || (candidate ? "NOT_AVAILABLE" : null);
-                const proposalBusy = decisionBusyId === proposal?.decision_id;
-                const canDecide = !autoExecuted && ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) && proposal?.status === "PENDING_APPROVAL";
-                const isWatch = item.action === "WATCH";
-                const effectiveExposure = proposal?.desired_exposure_pct ?? item.desired_exposure_pct;
+          <div className="aiDecisionList">
+            {decisions.map(item => {
+              const proposal = proposalBySymbol.get(item.symbol);
+              const candidate = candidateBySymbol.get(item.symbol);
+              const research = candidate?.research_context;
+              const researchStatus = research?.status || (candidate ? "NOT_AVAILABLE" : null);
+              const proposalBusy = decisionBusyId === proposal?.decision_id;
+              const canDecide = !autoExecuted && ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) && proposal?.status === "PENDING_APPROVAL";
+              const isWatch = item.action === "WATCH";
+              const effectiveExposure = proposal?.desired_exposure_pct ?? item.desired_exposure_pct;
 
-                return (
-                  <details className="aiDecisionCard" key={item.symbol}>
-                    <summary className="aiDecisionTop">
-                      <div className="aiDecisionIdentity">
-                        <button type="button" className="symbolLinkButton" onClick={event => { event.preventDefault(); openMarket(item.symbol); }}>{item.symbol}</button>
-                        <span className={`aiAction ${item.action}`}>{item.action}</span>
-                        {researchStatus && <span className={`aiResearchBadge ${researchStatus === "READY" ? "ready" : researchStatus === "ERROR" ? "error" : "neutral"}`}>Research {researchStatus}</span>}
-                      </div>
-                      <span className="aiConfidence">Confidence {(Number(item.confidence || 0) * 100).toFixed(0)}%</span>
-                    </summary>
-
-                    <div className="aiDecisionBody">
-                      <div className="aiReasoning">{item.reasoning}</div>
-                      {research && (
-                        <div className={`aiResearchDiagnostic ${research.status === "ERROR" ? "error" : ""}`}>
-                          <strong>Research diagnostic</strong>
-                          <span>{research.status === "READY" ? `READY · ${research.source_count ?? 0} retained sources · ${research.cache || "LIVE"}` : (research.error || "No structured research was returned for this symbol.")}</span>
-                        </div>
-                      )}
-
-                      <div className="aiDetailGrid">
-                        <div className="aiDetail"><span>What changed</span><p>{item.what_changed || "No material change noted."}</p></div>
-                        <div className="aiDetail"><span>Target exposure</span><strong>{fmtExposure(effectiveExposure)}</strong></div>
-                        <div className="aiDetail"><span>Thesis</span><p>{item.thesis_update || "No thesis update."}</p></div>
-                        <div className="aiDetail"><span>Invalidation</span><p>{item.thesis_invalidation || "No invalidation update."}</p></div>
-                      </div>
-
-                      {proposal && (
-                        <div className="aiProposal">
-                          <div className="aiProposalHead"><strong>{isWatch ? "Monitoring proposal" : "Deterministic proposal"}</strong><span className="aiProposalStatus">{proposal.status}</span></div>
-                          <p>{proposal.message}</p>
-                          {proposal.sizing_adjustment && <div className="aiResearchDiagnostic"><strong>Whole-share sizing adjustment</strong><span>{proposal.sizing_adjustment} Effective target: {fmtExposure(proposal.desired_exposure_pct)}.</span></div>}
-                          {proposal.order && <p><strong>{proposal.order.side}</strong> {proposal.order.quantity} shares · estimated ${Number(proposal.order.estimated_price || 0).toFixed(2)}</p>}
-                          {proposal.risk?.risk_checks?.length > 0 && (
-                            <div className="aiRiskChecks">
-                              {proposal.risk.risk_checks.map(check => <div key={check.name} className={`aiRiskCheck ${check.passed ? "pass" : "fail"}`}>{check.message}</div>)}
-                            </div>
-                          )}
-
-                          {canDecide && (
-                            <div className="aiPerDecisionActions">
-                              <button className="aiDanger" disabled={proposalBusy || batchBusy} onClick={() => actOne(proposal, "reject")}>
-                                <XCircle size={15}/>{proposalBusy ? "Working…" : (isWatch ? "Reject Watch" : "Reject this decision")}
-                              </button>
-                              <button className="aiPrimary" disabled={proposalBusy || batchBusy} onClick={() => actOne(proposal, "approve")}>
-                                <CheckCircle2 size={15}/>{proposalBusy ? "Working…" : (isWatch ? "Approve & Monitor" : "Approve & Execute this order")}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
+              return (
+                <details className="aiDecisionCard" key={item.symbol}>
+                  <summary className="aiDecisionTop">
+                    <div className="aiDecisionIdentity">
+                      <button type="button" className="symbolLinkButton" onClick={event => { event.preventDefault(); openMarket(item.symbol); }}>{item.symbol}</button>
+                      <span className={`aiAction ${item.action}`}>{item.action}</span>
+                      {researchStatus && <span className={`aiResearchBadge ${researchStatus === "READY" ? "ready" : researchStatus === "ERROR" ? "error" : "neutral"}`}>Research {researchStatus}</span>}
                     </div>
-                  </details>
-                );
-              })}
-            </div>
+                    <span className="aiConfidence">Confidence {(Number(item.confidence || 0) * 100).toFixed(0)}%</span>
+                  </summary>
 
-            {!autoExecuted && pendingCount > 0 && ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) && (
-              <div className="aiPerDecisionActions">
-                <button className="aiDanger" disabled={batchBusy || decisionBusyId != null} onClick={() => actAll("reject")}>
-                  <XCircle size={15}/>{batchBusy ? "Working…" : `Reject All Remaining (${pendingCount})`}
-                </button>
-                <button className="aiPrimary" disabled={batchBusy || decisionBusyId != null} onClick={() => actAll("approve")}>
-                  <CheckCircle2 size={15}/>{batchBusy ? "Working…" : `Approve All Remaining (${pendingCount})`}
-                </button>
-              </div>
-            )}
-          </>
+                  <div className="aiDecisionBody">
+                    <div className="aiReasoning">{item.reasoning}</div>
+                    {research && (
+                      <div className={`aiResearchDiagnostic ${research.status === "ERROR" ? "error" : ""}`}>
+                        <strong>Research diagnostic</strong>
+                        <span>{research.status === "READY" ? `READY · ${research.source_count ?? 0} retained sources · ${research.cache || "LIVE"}` : (research.error || "No structured research was returned for this symbol.")}</span>
+                      </div>
+                    )}
+
+                    <div className="aiDetailGrid">
+                      <div className="aiDetail"><span>What changed</span><p>{item.what_changed || "No material change noted."}</p></div>
+                      <div className="aiDetail"><span>Target exposure</span><strong>{fmtExposure(effectiveExposure)}</strong></div>
+                      <div className="aiDetail"><span>Thesis</span><p>{item.thesis_update || "No thesis update."}</p></div>
+                      <div className="aiDetail"><span>Invalidation</span><p>{item.thesis_invalidation || "No invalidation update."}</p></div>
+                    </div>
+
+                    {proposal && (
+                      <div className="aiProposal">
+                        <div className="aiProposalHead"><strong>{isWatch ? "Monitoring proposal" : "Deterministic proposal"}</strong><span className="aiProposalStatus">{proposal.status}</span></div>
+                        <p>{proposal.message}</p>
+                        {proposal.sizing_adjustment && <div className="aiResearchDiagnostic"><strong>Whole-share sizing adjustment</strong><span>{proposal.sizing_adjustment} Effective target: {fmtExposure(proposal.desired_exposure_pct)}.</span></div>}
+                        {proposal.order && <p><strong>{proposal.order.side}</strong> {proposal.order.quantity} shares · estimated ${Number(proposal.order.estimated_price || 0).toFixed(2)}</p>}
+                        {proposal.risk?.risk_checks?.length > 0 && (
+                          <div className="aiRiskChecks">
+                            {proposal.risk.risk_checks.map(check => <div key={check.name} className={`aiRiskCheck ${check.passed ? "pass" : "fail"}`}>{check.message}</div>)}
+                          </div>
+                        )}
+
+                        {canDecide && (
+                          <div className="aiPerDecisionActions">
+                            <button className="aiDanger" disabled={proposalBusy || batchBusy} onClick={() => actOne(proposal, "reject")}>
+                              <XCircle size={15}/>{proposalBusy ? "Working…" : (isWatch ? "Reject Watch" : "Reject this decision")}
+                            </button>
+                            <button className="aiPrimary" disabled={proposalBusy || batchBusy} onClick={() => actOne(proposal, "approve")}>
+                              <CheckCircle2 size={15}/>{proposalBusy ? "Working…" : (isWatch ? "Approve & Monitor" : "Approve & Execute this order")}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
         )}
       </CollapsibleSection>
     </div>
