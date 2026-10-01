@@ -205,14 +205,17 @@ export default function Markets() {
 
 
   const chartRequestId = useRef(0);
+  const [followLatest, setFollowLatest] = useState(true);
+  const [latestJump, setLatestJump] = useState(0);
+  const [chartInfo, setChartInfo] = useState(null);
 
-  async function loadSymbol(target) {
+  async function loadSymbol(target, quiet = false) {
 
     if (!target)
       return;
 
     const requestId = ++chartRequestId.current;
-    setLoading(true);
+    if (!quiet) setLoading(true);
     setError(null);
 
     try {
@@ -249,11 +252,14 @@ export default function Markets() {
       if (c.symbol !== target || c.timeframe !== timeframe) throw new Error("Chart response does not match the selected security and interval");
       setQuote(q);
       setCandles(c.candles || []);
+      setChartInfo(c);
 
     } catch (e) {
       if (requestId !== chartRequestId.current) return;
-      setQuote(null);
-      setCandles([]);
+      if (!quiet) {
+        setQuote(null);
+        setCandles([]);
+      }
       setError(e.message);
 
     } finally {
@@ -388,13 +394,22 @@ export default function Markets() {
 
   useEffect(() => {
 
-    if (symbol)
-      loadSymbol(symbol);
+    if (!symbol) return;
+    let cancelled = false;
+    let timer;
+    setChartInfo(null);
+    const refresh = async (quiet = false) => {
+      await loadSymbol(symbol, quiet);
+      if (!cancelled && followLatest) timer = setTimeout(() => refresh(true), 30000);
+    };
+    refresh();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      ++chartRequestId.current;
+    };
 
-  }, [
-    symbol,
-    timeframe
-  ]);
+  }, [symbol, timeframe, followLatest]);
 
 
   useEffect(() => {
@@ -728,6 +743,9 @@ export default function Markets() {
             <p>Regular-session candles · New York time (US) · Unadjusted prices. Interval buttons select candle duration, not date range.</p>
 
             <div className="chartToolbar">
+              <label><input type="checkbox" checked={followLatest} onChange={event => setFollowLatest(event.target.checked)}/> Follow latest (refresh every 30s)</label>
+              <button onClick={() => { setFollowLatest(true); setLatestJump(value => value + 1); }}>Latest</button>
+              <span>Last candle: {chartInfo?.latest_candle_time || "Loading…"} {chartInfo?.timezone || ""}</span>
 
               <div className="timeframeButtons">
 
@@ -820,7 +838,10 @@ export default function Markets() {
             ) : (
 
               <PriceChart
+                key={`${symbol}:${timeframe}`}
                 candles={candles}
+                followLatest={followLatest}
+                latestJump={latestJump}
                 timeframe={timeframe}
                 chartType={chartType}
                 showVolume={showVolume}
@@ -954,6 +975,8 @@ export default function Markets() {
 
 function PriceChart({
   candles,
+  followLatest,
+  latestJump,
   timeframe,
   chartType,
   showVolume
@@ -962,6 +985,8 @@ function PriceChart({
   const containerRef =
     useRef(null);
 
+
+  const savedRange = useRef(null);
 
   useEffect(() => {
 
@@ -1114,17 +1139,23 @@ function PriceChart({
     }
 
 
-    chart
-      .timeScale()
-      .fitContent();
+    if (!followLatest && savedRange.current) {
+      chart.timeScale().setVisibleLogicalRange(savedRange.current);
+    } else {
+      chart.timeScale().fitContent();
+      if (followLatest) chart.timeScale().scrollToRealTime();
+    }
 
 
     return () => {
+      savedRange.current = chart.timeScale().getVisibleLogicalRange();
       chart.remove();
     };
 
   }, [
     candles,
+    followLatest,
+    latestJump,
     timeframe,
     chartType,
     showVolume

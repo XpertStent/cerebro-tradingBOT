@@ -371,3 +371,5 @@ Screenshot regression fixture: USD net assets 1806.27, US position market values
 ## Chart history correctness
 
 Candle requests use an explicit recent range sized to the interval and requested count, consume all history pages, deduplicate/sort by broker timestamp and select the latest N only after pagination. Partial pagination failures raise an error instead of displaying old bars. US intraday timestamps are converted from New York time with DST, and the chart labels that timezone. Responses from superseded security/interval requests cannot overwrite the selected chart. Regular-session/unadjusted bars intentionally differ from the app's 24-hour quote.
+
+The Markets chart includes Follow latest (30-second refresh) and Latest controls. Turning follow off pauses automatic refresh and preserves the viewed range; Latest resumes follow and returns to the newest bar. The last broker candle timestamp is shown. Regular-session charts stop when that session ends and never fabricate future candles.
