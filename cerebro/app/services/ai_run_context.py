@@ -1,14 +1,11 @@
-import random
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from app.services.ai_context import ai_context
+from app.services.ai_research_batches import ai_research_batches
 from app.services.opend import opend
 from app.services.trading import trading
 from app.services.watchlist import watchlist
 from app.services.latest_quant import latest_quant
-from app.services.ai_web_research import ai_web_research
 from app.services.settings import settings
 
 
@@ -65,12 +62,7 @@ class AIRunContextBuilder:
         }
 
     def _risk_policy(self):
-        """Expose the deterministic limits to the decision model as context.
-
-        The model still cannot override these values. This only lets it choose
-        realistic target exposures instead of proposing orders that are
-        obviously guaranteed to be blocked later.
-        """
+        """Expose deterministic limits to the model without weakening them."""
         return {
             "risk_engine_enabled": settings.get_bool("risk.enabled"),
             "trading_enabled": settings.get_bool("trading.enabled"),
@@ -91,131 +83,19 @@ class AIRunContextBuilder:
             ),
         }
 
-    def _is_retryable_research_error(self, exc):
-        text = str(exc).lower()
-        retry_markers = (
-            "429", "rate limit", "rate_limit", "too many requests",
-            "timeout", "timed out", "temporarily unavailable",
-            "502", "503", "504", "connection reset", "connection error",
-        )
-        return any(marker in text for marker in retry_markers)
-
-    def _research_one_with_retry(self, item, retry_callback=None):
-        # Twelve-way research is fast when capacity permits, but model/web
-        # search quotas can burst. Retry transient/rate-limit failures with
-        # jitter rather than turning a temporary 429 into missing research.
-        max_attempts = 4
-        base_delay = 2.0
-        symbol = item["symbol"]
-
-        for attempt in range(1, max_attempts + 1):
-            try:
-                return ai_web_research.research(
-                    symbol=symbol,
-                    company_name=item.get("company_name"),
-                    quant_context=item.get("quant_context") or {},
-                    relationships=item.get("relationships") or [],
-                )
-            except Exception as exc:
-                if attempt >= max_attempts or not self._is_retryable_research_error(exc):
-                    raise
-
-                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0.0, 1.0)
-                if retry_callback:
-                    retry_callback(
-                        symbol=symbol,
-                        attempt=attempt,
-                        max_attempts=max_attempts,
-                        delay_seconds=round(delay, 1),
-                        error=str(exc),
-                    )
-                time.sleep(delay)
-
-        raise RuntimeError(f"Research retry loop exhausted for {symbol}")
-
-    def _research_many_with_progress(self, requests, progress_callback=None):
-        if not requests:
+    def _market_snapshots(self, symbols):
+        symbols = [symbol for symbol in symbols if symbol]
+        if not symbols:
             return {}
-
-        total = len(requests)
-        complete = 0
-        output = {}
-
-        def emit(**values):
-            if progress_callback:
-                progress_callback(total=total, complete=complete, **values)
-
-        def retry_emit(**values):
-            emit(
-                stage="RESEARCH_RETRY",
-                current_symbol=values.get("symbol"),
-                status=(
-                    f"RETRY {values.get('attempt')}/{values.get('max_attempts')} "
-                    f"in {values.get('delay_seconds')}s"
-                ),
-                retry_error=values.get("error"),
-                in_flight=min(total - complete, ai_web_research.max_workers),
-            )
-
-        emit(stage="RESEARCH", current_symbol=None, status="STARTING")
-
-        with ThreadPoolExecutor(max_workers=ai_web_research.max_workers) as executor:
-            futures = {
-                executor.submit(
-                    self._research_one_with_retry,
-                    item,
-                    retry_emit,
-                ): item["symbol"]
-                for item in requests
-            }
-
-            emit(
-                stage="RESEARCH",
-                current_symbol=None,
-                status="RUNNING",
-                in_flight=min(total, ai_web_research.max_workers),
-            )
-
-            for future in as_completed(futures):
-                symbol = futures[future]
-                try:
-                    output[symbol] = future.result()
-                except Exception as exc:
-                    output[symbol] = {
-                        "symbol": symbol,
-                        "status": "ERROR",
-                        "error": str(exc),
-                        "research": None,
-                        "sources": [],
-                    }
-                complete += 1
-                ready = sum(
-                    1 for item in output.values()
-                    if (item or {}).get("status") == "READY"
-                )
-                errors = sum(
-                    1 for item in output.values()
-                    if (item or {}).get("status") == "ERROR"
-                )
-                emit(
-                    stage="RESEARCH",
-                    current_symbol=symbol,
-                    status=(output[symbol] or {}).get("status") or "DONE",
-                    error=(output[symbol] or {}).get("error"),
-                    ready=ready,
-                    errors=errors,
-                    in_flight=max(0, min(total - complete, ai_web_research.max_workers)),
-                )
-
-        emit(
-            stage="RESEARCH_COMPLETE",
-            current_symbol=None,
-            status="COMPLETE",
-            ready=sum(1 for item in output.values() if (item or {}).get("status") == "READY"),
-            errors=sum(1 for item in output.values() if (item or {}).get("status") == "ERROR"),
-            in_flight=0,
-        )
-        return output
+        try:
+            rows = opend.get_snapshots(symbols)
+        except Exception:
+            return {}
+        return {
+            str(item.get("symbol") or "").upper(): item
+            for item in rows
+            if item.get("symbol")
+        }
 
     def build(
         self,
@@ -225,7 +105,7 @@ class AIRunContextBuilder:
         enrich_research=None,
         research_progress_callback=None,
     ):
-        """Build deterministic decision context with optional live research telemetry."""
+        """Build deterministic decision context with clustered live research."""
 
         if max_candidates is None:
             max_candidates = int(settings.get("ai.context.max_candidates"))
@@ -293,12 +173,18 @@ class AIRunContextBuilder:
         watch_symbols = {item.get("symbol") for item in watch_items if item.get("symbol")}
         pending_symbols = {item.get("symbol") for item in pending_orders if item.get("symbol")}
 
+        # Held names and quant candidates are always research-eligible. One
+        # OpenD snapshot request supplies fresh market data for all of them,
+        # including holdings that are not present in the quant Top-N.
+        research_symbols = [
+            symbol for symbol in symbols
+            if symbol in held_symbols or symbol in quant_symbols
+        ]
+        snapshots_by_symbol = self._market_snapshots(research_symbols)
+
         research_requests = []
         if enrich_research:
-            for symbol in symbols:
-                if symbol not in held_symbols and symbol not in quant_symbols:
-                    continue
-
+            for symbol in research_symbols:
                 quant_item = quant_by_symbol.get(symbol) or {}
                 metrics = quant_item.get("metrics") or {}
                 company_name = quant_item.get("name")
@@ -333,10 +219,11 @@ class AIRunContextBuilder:
                     "symbol": symbol,
                     "company_name": company_name,
                     "relationships": relationships,
+                    "market_snapshot": snapshots_by_symbol.get(symbol),
                     "quant_context": quant_research_context,
                 })
 
-        research_by_symbol = self._research_many_with_progress(
+        research_by_symbol = ai_research_batches.research_many(
             research_requests,
             progress_callback=research_progress_callback,
         ) if research_requests else {}
@@ -395,6 +282,7 @@ class AIRunContextBuilder:
                 "symbol": symbol,
                 "relationship": relationship,
                 "relationships": relationships,
+                "market_snapshot": snapshots_by_symbol.get(symbol),
                 "quant": quant_context,
                 "research_context": research_by_symbol.get(symbol),
                 "event_review": event_review,
@@ -405,7 +293,7 @@ class AIRunContextBuilder:
             })
 
         return {
-            "schema_version": 3,
+            "schema_version": 4,
             "run": {
                 "type": run_type.upper(),
                 "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -415,6 +303,9 @@ class AIRunContextBuilder:
                 "optional_watchlist_count": max(0, len(candidates) - mandatory_count),
                 "research_enabled": bool(enrich_research),
                 "research_request_count": len(research_requests),
+                "research_parallel_batches": (
+                    ai_research_batches.parallel_batches if enrich_research else 0
+                ),
             },
             "market_context": self._market_context(),
             "deterministic_risk_policy": self._risk_policy(),
