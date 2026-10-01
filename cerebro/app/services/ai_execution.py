@@ -7,10 +7,11 @@ from app.services.opend import opend
 from app.services.risk import risk
 from app.services.settings import settings
 from app.services.trading import trading
+from app.services.watchlist import watchlist
 
 
-ACTIONABLE = {"BUY", "ADD", "REDUCE", "SELL"}
-NON_ACTIONABLE = {"HOLD", "WATCH", "IGNORE"}
+ORDER_ACTIONS = {"BUY", "ADD", "REDUCE", "SELL"}
+NON_ACTIONABLE = {"HOLD", "IGNORE"}
 TERMINAL_ORDER_STATES = {
     "FILLED_ALL",
     "CANCELLED_ALL",
@@ -22,7 +23,7 @@ TERMINAL_ORDER_STATES = {
 
 
 class AIExecutionService:
-    """Translate AI intents into deterministic PAPER order proposals."""
+    """Translate AI intents into deterministic PAPER/order or watchlist proposals."""
 
     def _position_map(self, context):
         return {
@@ -152,18 +153,30 @@ class AIExecutionService:
                 "thesis_invalidation": item.get("thesis_invalidation"),
                 "desired_exposure_pct": item.get("desired_exposure_pct"),
                 "status": "NO_ORDER",
+                "proposal_type": "ORDER" if action in ORDER_ACTIONS else "DECISION",
                 "order": None,
                 "risk": None,
                 "message": None,
             }
 
-            if action in NON_ACTIONABLE:
+            # WATCH is an operator decision, not a broker order. It intentionally
+            # participates in the same approval queue so the user can accept or
+            # reject AI monitoring suggestions individually or in bulk.
+            if action == "WATCH":
+                proposal["proposal_type"] = "WATCHLIST"
+                proposal["status"] = "PENDING_APPROVAL"
+                proposal["message"] = "Ready to add to Monitored Securities"
                 ai_memory.set_execution_result(record["id"], status="DEFERRED")
-                proposal["message"] = f"{action} requires no broker order"
                 proposals.append(proposal)
                 continue
 
-            if action not in ACTIONABLE:
+            if action in NON_ACTIONABLE:
+                ai_memory.set_execution_result(record["id"], status="DEFERRED")
+                proposal["message"] = f"{action} requires no operator or broker action"
+                proposals.append(proposal)
+                continue
+
+            if action not in ORDER_ACTIONS:
                 ai_memory.set_execution_result(
                     record["id"], status="REJECTED",
                     rejection_code="INVALID_ACTION",
@@ -365,9 +378,66 @@ class AIExecutionService:
             "estimated_price": price,
         }, fresh_risk
 
+    def _approve_watch(self, proposal):
+        if proposal.get("status") not in {"PENDING_APPROVAL", "APPROVED"}:
+            raise RuntimeError("WATCH proposal is not awaiting approval")
+
+        symbol = str(proposal.get("symbol") or "").upper()
+        existing = watchlist.get(symbol)
+        existing_source = str((existing or {}).get("source") or "").upper()
+        source = "MANUAL+AI" if existing and "MANUAL" in existing_source else "AI"
+        confidence = proposal.get("confidence")
+        score = None
+        try:
+            score = round(float(confidence) * 100.0, 1)
+        except (TypeError, ValueError):
+            pass
+
+        item = watchlist.upsert(
+            symbol=symbol,
+            name=(existing or {}).get("name"),
+            market="US",
+            source=source,
+            status="WATCH",
+            score=score,
+            reason=proposal.get("reasoning") or "AI suggested monitoring this security.",
+            strategy_hint=proposal.get("thesis_update"),
+            enabled=True,
+        )
+        ai_memory.set_execution_result(
+            proposal.get("decision_id"),
+            status="APPROVED",
+            broker_status="WATCHLIST_ADDED",
+        )
+        activity.write(
+            category="AI",
+            action="AI_WATCHLIST_ADDED",
+            message=f"Approved AI WATCH decision and added {symbol} to Monitored Securities",
+            symbol=symbol,
+            details={
+                "decision_id": proposal.get("decision_id"),
+                "source": source,
+                "score": score,
+            },
+        )
+
+        result = deepcopy(proposal)
+        result["status"] = "WATCHLIST_ADDED"
+        result["watchlist_item"] = item
+        result["message"] = "Approved and added to Monitored Securities"
+        return result
+
+    def approve(self, proposal):
+        """Approve one pending AI decision, dispatching by decision type."""
+        if str(proposal.get("action") or "").upper() == "WATCH":
+            return self._approve_watch(proposal)
+        return self.execute(proposal)
+
     def execute(self, proposal):
         if proposal.get("status") not in {"PENDING_APPROVAL", "APPROVED"}:
             raise RuntimeError("Proposal is not executable")
+        if str(proposal.get("action") or "").upper() not in ORDER_ACTIONS:
+            raise RuntimeError("Proposal does not contain a broker-order action")
         if str(settings.get("trading.mode")).lower() != "paper":
             raise RuntimeError("AI execution is limited to paper trading")
 
