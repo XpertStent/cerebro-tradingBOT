@@ -34,11 +34,42 @@ def start_decision_run(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _audit_terminal_progress(run_id: str, data: dict):
+    if data.get("status") not in {"COMPLETE", "FAILED"}:
+        return
+    if data.get("activity_terminal_logged"):
+        return
+
+    failed = data.get("status") == "FAILED"
+    activity.write(
+        category="AI",
+        action="AI_WORKFLOW_FAILED" if failed else "AI_WORKFLOW_COMPLETE",
+        message=(
+            f"AI workflow {run_id} failed: {data.get('error') or data.get('message') or 'unknown error'}"
+            if failed
+            else f"AI workflow {run_id} completed at stage {data.get('stage')}"
+        ),
+        level="ERROR" if failed else "INFO",
+        details={
+            "run_id": run_id,
+            "stage": data.get("stage"),
+            "elapsed_seconds": data.get("elapsed_seconds"),
+            "candidate_count": (data.get("ai") or {}).get("candidate_count"),
+            "research_ready": (data.get("ai") or {}).get("research_ready"),
+            "research_errors": (data.get("ai") or {}).get("research_errors"),
+            "error": data.get("error"),
+        },
+    )
+    ai_decision_jobs.update(run_id, activity_terminal_logged=True)
+    data["activity_terminal_logged"] = True
+
+
 @router.get("/progress/{run_id}")
 def get_decision_progress(run_id: str):
     data = ai_decision_jobs.progress(run_id)
     if data is None:
         raise HTTPException(status_code=404, detail="AI decision run not found")
+    _audit_terminal_progress(run_id, data)
     return data
 
 
