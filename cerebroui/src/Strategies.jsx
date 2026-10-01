@@ -51,6 +51,7 @@ export default function Strategies() {
   const [bundle, setBundle] = useState(null);
   const [latestQuant, setLatestQuant] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [decisionBusyId, setDecisionBusyId] = useState(null);
   const [message, setMessage] = useState(null);
 
   const decisions = bundle?.ai?.decision?.decisions || [];
@@ -62,12 +63,21 @@ export default function Strategies() {
   const running = progress?.status === "RUNNING" || progress?.status === "QUEUED";
   const researchSymbols = progress?.ai?.research_symbols || {};
   const events = progress?.events || [];
+  const decisionContext = bundle?.ai?.context || {};
 
   const proposalBySymbol = useMemo(() => {
     const map = new Map();
     for (const item of proposals) map.set(item.symbol, item);
     return map;
   }, [proposals]);
+
+  const candidateBySymbol = useMemo(() => {
+    const map = new Map();
+    for (const item of decisionContext?.candidates || []) {
+      if (item?.symbol) map.set(item.symbol, item);
+    }
+    return map;
+  }, [decisionContext]);
 
   async function loadLatest() {
     try {
@@ -125,13 +135,21 @@ export default function Strategies() {
     }
   }
 
-  async function act(action) {
-    if (!runId) return;
-    setBusy(true);
+  async function actOne(proposal, action) {
+    if (!runId || !proposal?.decision_id) return;
+
+    if (action === "approve") {
+      const ok = window.confirm(
+        `Approve only ${proposal.symbol} and submit its PAPER order? No other AI decision will be approved.`
+      );
+      if (!ok) return;
+    }
+
+    setDecisionBusyId(proposal.decision_id);
     setMessage(null);
     try {
       const response = await fetch(
-        `/api/ai/decision/${encodeURIComponent(runId)}/${action}`,
+        `/api/ai/decision/${encodeURIComponent(runId)}/proposal/${encodeURIComponent(proposal.decision_id)}/${action}`,
         { method: "POST" }
       );
       const data = await response.json();
@@ -139,24 +157,17 @@ export default function Strategies() {
         throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
       }
       setBundle(data);
-      setProgress(previous => previous ? {
-        ...previous,
-        status: "COMPLETE",
-        stage: "COMPLETE",
-        message: action === "approve"
-          ? "Decision approved and execution attempt complete"
-          : "Decision rejected — no pending AI orders executed"
-      } : previous);
       setMessage({
         kind: "ok",
         text: action === "approve"
-          ? "AI decision approved. Eligible paper orders were submitted."
-          : "AI decision rejected. No pending AI orders were submitted."
+          ? `${proposal.symbol} approved and execution attempted. Other decisions were unchanged.`
+          : `${proposal.symbol} rejected. Other decisions were unchanged.`
       });
+      await refreshResult(runId);
     } catch (error) {
       setMessage({ kind: "error", text: error.message });
     } finally {
-      setBusy(false);
+      setDecisionBusyId(null);
     }
   }
 
@@ -269,7 +280,7 @@ export default function Strategies() {
       <section className="aiHero">
         <div>
           <h2>AI Decision Engine</h2>
-          <p>Quant → research → decision model → deterministic risk → approval.</p>
+          <p>Quant → research → decision model → deterministic risk → individual approval.</p>
         </div>
         <div className="aiHeroActions">
           <button className="aiPrimary" onClick={startManualRun} disabled={busy || running}>
@@ -331,7 +342,7 @@ export default function Strategies() {
             <BrainCircuit size={18}/>
             <div>
               <strong>Decision model request is active</strong>
-              <span>Cerebro can show request/stage timing and completed structured output, but not the model&apos;s private chain-of-thought.</span>
+              <span>Cerebro shows request/stage timing and completed structured reasoning, without exposing private chain-of-thought.</span>
             </div>
           </div>
         )}
@@ -363,7 +374,7 @@ export default function Strategies() {
 
       <CollapsibleSection
         title="Live Research Status"
-        subtitle="Each completed symbol appears here as the parallel research workers finish."
+        subtitle="Rate-limit/transient failures are retried automatically before a symbol is marked ERROR."
         defaultOpen={running && progress?.stage === "RESEARCH_AND_CONTEXT"}
         bodyClassName="scrollRegion compact"
       >
@@ -391,7 +402,7 @@ export default function Strategies() {
           <div className="aiSummaryGrid">
             <div className="aiSummaryCard"><span>Portfolio</span><strong>{bundle.ai.decision.portfolio_summary || "—"}</strong></div>
             <div className="aiSummaryCard"><span>Market</span><strong>{bundle.ai.decision.market_summary || "—"}</strong></div>
-            <div className="aiSummaryCard"><span>Decisions</span><strong>{decisions.length}</strong></div>
+            <div className="aiSummaryCard"><span>Decisions</span><strong>{decisions.length} · {pendingCount} awaiting approval</strong></div>
           </div>
         </CollapsibleSection>
       )}
@@ -433,7 +444,7 @@ export default function Strategies() {
 
       <CollapsibleSection
         title="AI Decisions & Reasoning"
-        subtitle="AI proposes portfolio intent. Cerebro sizes and risk-checks orders deterministically."
+        subtitle="Each actionable proposal is approved or rejected independently. One button can never approve the batch."
         actions={<DatabaseZap size={18}/>} 
         bodyClassName="scrollRegion"
       >
@@ -443,6 +454,16 @@ export default function Strategies() {
           <div className="aiDecisionList">
             {decisions.map(item => {
               const proposal = proposalBySymbol.get(item.symbol);
+              const candidate = candidateBySymbol.get(item.symbol);
+              const research = candidate?.research_context;
+              const researchStatus = research?.status || (candidate ? "NOT_AVAILABLE" : null);
+              const proposalBusy = decisionBusyId === proposal?.decision_id;
+              const canDecide = (
+                !autoExecuted &&
+                ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) &&
+                proposal?.status === "PENDING_APPROVAL"
+              );
+
               return (
                 <details className="aiDecisionCard" key={item.symbol}>
                   <summary className="aiDecisionTop">
@@ -451,12 +472,30 @@ export default function Strategies() {
                         {item.symbol}
                       </button>
                       <span className={`aiAction ${item.action}`}>{item.action}</span>
+                      {researchStatus && (
+                        <span className={`aiResearchBadge ${researchStatus === "READY" ? "ready" : researchStatus === "ERROR" ? "error" : "neutral"}`}>
+                          Research {researchStatus}
+                        </span>
+                      )}
                     </div>
                     <span className="aiConfidence">Confidence {(Number(item.confidence || 0) * 100).toFixed(0)}%</span>
                   </summary>
 
                   <div className="aiDecisionBody">
                     <div className="aiReasoning">{item.reasoning}</div>
+
+                    {research && (
+                      <div className={`aiResearchDiagnostic ${research.status === "ERROR" ? "error" : ""}`}>
+                        <strong>Research diagnostic</strong>
+                        {research.status === "READY" ? (
+                          <span>
+                            READY · {research.source_count ?? 0} retained sources · {research.cache || "LIVE"}
+                          </span>
+                        ) : (
+                          <span>{research.error || "No structured research was returned for this symbol."}</span>
+                        )}
+                      </div>
+                    )}
 
                     <div className="aiDetailGrid">
                       <div className="aiDetail"><span>What changed</span><p>{item.what_changed || "No material change noted."}</p></div>
@@ -484,23 +523,33 @@ export default function Strategies() {
                             ))}
                           </div>
                         )}
+
+                        {canDecide && (
+                          <div className="aiPerDecisionActions">
+                            <button
+                              className="aiDanger"
+                              disabled={proposalBusy}
+                              onClick={() => actOne(proposal, "reject")}
+                            >
+                              <XCircle size={15}/>
+                              {proposalBusy ? "Working…" : "Reject this decision"}
+                            </button>
+                            <button
+                              className="aiPrimary"
+                              disabled={proposalBusy}
+                              onClick={() => actOne(proposal, "approve")}
+                            >
+                              <CheckCircle2 size={15}/>
+                              {proposalBusy ? "Working…" : "Approve & Execute this order"}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
                 </details>
               );
             })}
-          </div>
-        )}
-
-        {decisions.length > 0 && !autoExecuted && approvalMode === "MANUAL" && (
-          <div className="aiDecisionActions stickyDecisionActions">
-            <button className="aiDanger" disabled={busy} onClick={() => act("reject")}>
-              <XCircle size={15}/> Reject
-            </button>
-            <button className="aiPrimary" disabled={busy || pendingCount === 0} onClick={() => act("approve")}>
-              <CheckCircle2 size={15}/> Approve & Execute ({pendingCount})
-            </button>
           </div>
         )}
       </CollapsibleSection>
