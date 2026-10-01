@@ -50,10 +50,7 @@ class AIDecisionJobManager:
 
         with self._lock:
             active = next(
-                (
-                    job for job in self._jobs.values()
-                    if job.get("status") in {"QUEUED", "RUNNING"}
-                ),
+                (job for job in self._jobs.values() if job.get("status") in {"QUEUED", "RUNNING"}),
                 None,
             )
             if active:
@@ -93,7 +90,9 @@ class AIDecisionJobManager:
                 "research_current_symbol": None,
                 "research_in_flight": 0,
                 "research_symbols": {},
+                "research_details": {},
                 "model_started_at": None,
+                "decision_web_research": None,
                 "message": "Not started",
             },
             "result": None,
@@ -133,12 +132,7 @@ class AIDecisionJobManager:
             current_symbol = quant.get("current_symbol")
 
         if current_symbol and current_symbol != previous_symbol:
-            self._event(
-                run_id,
-                "QUANT",
-                f"Historical analysis: {current_symbol}",
-                symbol=current_symbol,
-            )
+            self._event(run_id, "QUANT", f"Historical analysis: {current_symbol}", symbol=current_symbol)
 
     def _research_progress(self, run_id, **values):
         with self._lock:
@@ -166,9 +160,29 @@ class AIDecisionJobManager:
                     if total else "Preparing research"
                 ),
             })
+            details = ai.setdefault("research_details", {})
             if symbol:
-                symbols = ai.setdefault("research_symbols", {})
-                symbols[symbol] = status or "COMPLETE"
+                ai.setdefault("research_symbols", {})[symbol] = status or "COMPLETE"
+                details[symbol] = {
+                    "symbol": symbol,
+                    "status": status or "COMPLETE",
+                    "cache": values.get("cache"),
+                    "batch_number": values.get("batch_number"),
+                    "error": values.get("error"),
+                }
+            elif status == "RETRY":
+                for batch_symbol in values.get("batch_symbols") or []:
+                    ai.setdefault("research_symbols", {})[batch_symbol] = "RETRY"
+                    details[batch_symbol] = {
+                        "symbol": batch_symbol,
+                        "status": "RETRY",
+                        "batch_number": values.get("batch_number"),
+                        "attempt": values.get("attempt"),
+                        "max_attempts": values.get("max_attempts"),
+                        "delay_seconds": values.get("delay_seconds"),
+                        "retry_source": values.get("retry_source"),
+                        "error": values.get("error"),
+                    }
 
             research_fraction = (complete / total) if total else 0.0
             job["percent"] = round(60.0 + research_fraction * 20.0, 1)
@@ -182,6 +196,33 @@ class AIDecisionJobManager:
                 kind="ERROR" if status == "ERROR" else "INFO",
                 symbol=symbol,
             )
+        elif status == "RETRY":
+            self._event(
+                run_id,
+                "RESEARCH_RETRY",
+                f"Research batch retry {values.get('attempt')}/{values.get('max_attempts')} in {values.get('delay_seconds')}s",
+                kind="INFO",
+            )
+
+    def _decision_retry_progress(self, run_id, **values):
+        with self._lock:
+            job = self._jobs.get(run_id)
+            if not job:
+                return
+            ai = job.setdefault("ai", {})
+            ai["stage"] = "DECISION_RETRY"
+            ai["decision_retry"] = deepcopy(values)
+            ai["message"] = (
+                f"Decision request rate-limited/transiently failed; retrying in "
+                f"{values.get('delay_seconds')}s"
+            )
+            job["message"] = ai["message"]
+        self._event(
+            run_id,
+            "DECISION_RETRY",
+            f"Retrying final decision request in {values.get('delay_seconds')}s",
+            kind="INFO",
+        )
 
     def _execution_failed(self, proposal, exc):
         failed = deepcopy(proposal)
@@ -252,7 +293,9 @@ class AIDecisionJobManager:
                         "research_current_symbol": None,
                         "research_in_flight": 0,
                         "research_symbols": {},
+                        "research_details": {},
                         "model_started_at": None,
+                        "decision_web_research": None,
                         "message": "Preparing AI decision context",
                     },
                 )
@@ -280,13 +323,26 @@ class AIDecisionJobManager:
                     if (item.get("research_context") or {}).get("status") == "ERROR"
                 )
                 research_request_count = context.get("run", {}).get("research_request_count", 0)
+                research_symbols = {
+                    item.get("symbol"): (item.get("research_context") or {}).get("status", "UNKNOWN")
+                    for item in research_candidates if item.get("symbol")
+                }
+                research_details = {
+                    item.get("symbol"): deepcopy(item.get("research_context") or {})
+                    for item in research_candidates if item.get("symbol")
+                }
 
                 model_started_at = self._now()
+                decision_web_enabled = settings.get_bool("ai.decision.web_search_enabled")
                 self.update(
                     run_id,
                     stage="DECISION_MODEL",
                     percent=82.0,
-                    message="Decision model request active — generating structured portfolio decisions",
+                    message=(
+                        "Decision model + independent web verification active — generating structured portfolio decisions"
+                        if decision_web_enabled
+                        else "Decision model request active — generating structured portfolio decisions"
+                    ),
                     ai={
                         "stage": "DECISION_MODEL",
                         "candidate_count": len(context.get("candidates") or []),
@@ -296,24 +352,30 @@ class AIDecisionJobManager:
                         "research_errors": research_errors,
                         "research_current_symbol": None,
                         "research_in_flight": 0,
-                        "research_symbols": {
-                            item.get("symbol"): (item.get("research_context") or {}).get("status", "UNKNOWN")
-                            for item in research_candidates if item.get("symbol")
-                        },
+                        "research_symbols": research_symbols,
+                        "research_details": research_details,
                         "model_started_at": model_started_at,
+                        "decision_web_research": {
+                            "enabled": decision_web_enabled,
+                            "status": "RUNNING" if decision_web_enabled else "DISABLED",
+                        },
                         "message": "Research/context complete; decision model request is running",
                     },
                 )
                 self._event(
                     run_id,
                     "DECISION_MODEL",
-                    f"Decision model started for {len(context.get('candidates') or [])} candidates",
+                    (
+                        f"Decision model started for {len(context.get('candidates') or [])} candidates "
+                        f"with {'live web verification' if decision_web_enabled else 'web search disabled'}"
+                    ),
                 )
 
                 decision_bundle = ai_decision.run(
                     run_type=run_type,
                     enrich_research=enrich_research,
                     context=context,
+                    retry_callback=lambda **kwargs: self._decision_retry_progress(run_id, **kwargs),
                 )
                 self._event(
                     run_id,
@@ -335,11 +397,10 @@ class AIDecisionJobManager:
                         "research_errors": research_errors,
                         "research_current_symbol": None,
                         "research_in_flight": 0,
-                        "research_symbols": {
-                            item.get("symbol"): (item.get("research_context") or {}).get("status", "UNKNOWN")
-                            for item in research_candidates if item.get("symbol")
-                        },
+                        "research_symbols": research_symbols,
+                        "research_details": research_details,
                         "model_started_at": model_started_at,
+                        "decision_web_research": decision_bundle.get("decision_web_research"),
                         "message": "Decision model complete",
                     },
                 )
@@ -383,10 +444,7 @@ class AIDecisionJobManager:
 
                 latest_ai_decision.save(run_id=run_id, result=result)
 
-                final_stage = (
-                    "AWAITING_APPROVAL"
-                    if not proposal_bundle.get("auto_execute") else "COMPLETE"
-                )
+                final_stage = "AWAITING_APPROVAL" if not proposal_bundle.get("auto_execute") else "COMPLETE"
                 final_message = (
                     "AI decision complete — review and approve or reject actionable proposals"
                     if not proposal_bundle.get("auto_execute")
@@ -429,15 +487,10 @@ class AIDecisionJobManager:
         data.pop("result", None)
         started = data.get("started_at")
         finished = data.get("finished_at")
-        data["elapsed_seconds"] = (
-            round((finished or self._now()) - started, 1) if started else 0.0
-        )
+        data["elapsed_seconds"] = round((finished or self._now()) - started, 1) if started else 0.0
         model_started = (data.get("ai") or {}).get("model_started_at")
         if model_started:
-            data["ai"]["model_elapsed_seconds"] = round(
-                (finished or self._now()) - model_started,
-                1,
-            )
+            data["ai"]["model_elapsed_seconds"] = round((finished or self._now()) - model_started, 1)
         else:
             data["ai"]["model_elapsed_seconds"] = 0.0
         return data
@@ -466,22 +519,13 @@ class AIDecisionJobManager:
         return None
 
     def latest(self):
-        # If the operator navigates away from Strategies while a job is still
-        # running, the React component is unmounted and loses its local run_id.
-        # The backend job itself continues. Prefer the newest active job here so
-        # the normal /latest bootstrap can immediately reattach to it when the
-        # page is opened again. Once no job is active, fall back to the latest
-        # persisted completed decision artifact as before.
         with self._lock:
             active = [
                 job for job in self._jobs.values()
                 if job.get("status") in {"QUEUED", "RUNNING"}
             ]
             if active:
-                newest = max(
-                    active,
-                    key=lambda item: float(item.get("created_at") or 0),
-                )
+                newest = max(active, key=lambda item: float(item.get("created_at") or 0))
                 data = deepcopy(newest)
                 data.pop("result", None)
                 started = data.get("started_at")
