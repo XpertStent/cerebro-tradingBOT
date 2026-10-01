@@ -6,9 +6,6 @@ from app.services.settings import settings
 from app.services.trading import trading
 from app.services.ai_execution import ai_execution
 from app.services.ai_run_context import ai_run_context
-from app.services.live_safety import live_safety
-from app.services.live_safety_hardening import install_live_safety_hardening
-from app.services.live_trading_hardening import install_hardened_trading
 from app.services.live_ai_adapter import install_live_ai_execution
 from app.services.live_context_adapter import install_live_context
 from app.api.market import router as market_router
@@ -28,8 +25,6 @@ from app.api.settings import router as settings_router
 
 
 NAME = config["cerebro"]["name"]
-install_hardened_trading(trading)
-install_live_safety_hardening(live_safety)
 install_live_ai_execution(ai_execution)
 install_live_context(ai_run_context)
 
