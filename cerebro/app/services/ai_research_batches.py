@@ -1,10 +1,10 @@
 import json
-import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from app.services.ai_web_research import RESEARCH_SCHEMA, RESEARCH_SCHEMA_VERSION, ai_web_research
+from app.services.openai_retry import is_retryable_openai_error, retry_delay
 from app.services.settings import DEFINITIONS, settings
 
 
@@ -57,14 +57,6 @@ class AIResearchBatchService:
     @property
     def parallel_batches(self):
         return max(1, int(settings.get("ai.research.parallel_batches")))
-
-    def _is_retryable(self, exc):
-        text = str(exc).lower()
-        return any(marker in text for marker in (
-            "429", "rate limit", "rate_limit", "too many requests",
-            "timeout", "timed out", "temporarily unavailable",
-            "502", "503", "504", "connection reset", "connection error",
-        ))
 
     def _partition(self, items, count):
         if not items:
@@ -240,9 +232,15 @@ Return only the requested structured result.
             try:
                 return self._research_batch_once(batch)
             except Exception as exc:
-                if attempt >= max_attempts or not self._is_retryable(exc):
+                if attempt >= max_attempts or not is_retryable_openai_error(exc):
                     raise
-                delay = 2.0 * (2 ** (attempt - 1)) + random.uniform(0.0, 1.0)
+
+                delay, retry_source, provider_delay = retry_delay(
+                    exc,
+                    attempt=attempt,
+                    base_delay=2.0,
+                    safety_seconds=1.0,
+                )
                 if progress_callback:
                     progress_callback(
                         stage="RESEARCH_RETRY",
@@ -252,7 +250,12 @@ Return only the requested structured result.
                         batch_symbols=symbols,
                         attempt=attempt,
                         max_attempts=max_attempts,
-                        delay_seconds=round(delay, 1),
+                        delay_seconds=round(delay, 3),
+                        provider_retry_after_seconds=(
+                            round(provider_delay, 3)
+                            if provider_delay is not None else None
+                        ),
+                        retry_source=retry_source,
                         error=str(exc),
                     )
                 time.sleep(delay)
