@@ -5,11 +5,22 @@ import "./LiveTrading.css";
 
 const nativeFetch = window.fetch.bind(window);
 
+async function isUnlockRequired(response) {
+  if (response.status === 423) return true;
+  if (![403, 409, 500].includes(response.status)) return false;
+  try {
+    const data = await response.clone().json();
+    return JSON.stringify(data?.detail ?? data).includes("TRADE_UNLOCK_REQUIRED");
+  } catch (_) {
+    return false;
+  }
+}
+
 if (!window.__cerebroUnlockInterceptorInstalled) {
   window.__cerebroUnlockInterceptorInstalled = true;
   window.fetch = async (...args) => {
     const response = await nativeFetch(...args);
-    if (response.status !== 423) return response;
+    if (!(await isUnlockRequired(response))) return response;
 
     return new Promise(resolve => {
       window.dispatchEvent(new CustomEvent("cerebro-unlock-required", {
