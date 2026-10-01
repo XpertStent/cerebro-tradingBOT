@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import "./style.css";
+import "./AppPolish.css";
 import Markets from "./Markets";
 import Orders from "./Orders";
 import Portfolio from "./Portfolio";
@@ -23,15 +24,23 @@ import Settings from "./Settings";
 import CollapsibleSection from "./CollapsibleSection";
 
 const nav = [
-  ["Dashboard", LayoutDashboard],
-  ["Markets", LineChart],
-  ["Watchlist", Star],
-  ["Strategies", BrainCircuit],
-  ["Orders", ClipboardList],
-  ["Portfolio", Wallet],
-  ["Activity / Logs", ScrollText],
-  ["Settings", SettingsIcon]
+  ["Dashboard", LayoutDashboard, "dashboard"],
+  ["Markets", LineChart, "markets"],
+  ["Watchlist", Star, "watchlist"],
+  ["Strategies", BrainCircuit, "strategies"],
+  ["Orders", ClipboardList, "orders"],
+  ["Portfolio", Wallet, "portfolio"],
+  ["Activity / Logs", ScrollText, "activity"],
+  ["Settings", SettingsIcon, "settings"]
 ];
+
+const PAGE_BY_SLUG = Object.fromEntries(nav.map(([name, , slug]) => [slug, name]));
+const SLUG_BY_PAGE = Object.fromEntries(nav.map(([name, , slug]) => [name, slug]));
+
+function pageFromHash() {
+  const slug = window.location.hash.replace(/^#\/?/, "").split("/")[0].toLowerCase();
+  return PAGE_BY_SLUG[slug] || "Dashboard";
+}
 
 function money(value) {
   if (value === null || value === undefined) return "—";
@@ -45,7 +54,22 @@ function App() {
   const [system, setSystem] = useState(null);
   const [portfolio, setPortfolio] = useState(null);
   const [orders, setOrders] = useState(null);
-  const [activePage, setActivePage] = useState("Dashboard");
+  const [activePage, setActivePage] = useState(pageFromHash);
+
+  function navigate(page, { replace = false } = {}) {
+    const next = SLUG_BY_PAGE[page] ? page : "Dashboard";
+    const hash = `#/${SLUG_BY_PAGE[next]}`;
+    if (window.location.hash === hash) {
+      setActivePage(next);
+      return;
+    }
+    if (replace) {
+      window.history.replaceState(null, "", hash);
+      setActivePage(next);
+    } else {
+      window.location.hash = hash;
+    }
+  }
 
   async function refresh() {
     try {
@@ -55,18 +79,24 @@ function App() {
         fetch("/api/orders/", { cache: "no-store" })
       ]);
 
-      setSystem(await s.json());
-      setPortfolio(await p.json());
-      setOrders(await o.json());
+      if (s.ok) setSystem(await s.json());
+      if (p.ok) setPortfolio(await p.json());
+      if (o.ok) setOrders(await o.json());
     } catch (e) {
       console.error(e);
     }
   }
 
   useEffect(() => {
+    if (!window.location.hash) navigate("Dashboard", { replace: true });
+    const onHashChange = () => setActivePage(pageFromHash());
+    window.addEventListener("hashchange", onHashChange);
     refresh();
     const timer = setInterval(refresh, 10000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("hashchange", onHashChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -74,12 +104,20 @@ function App() {
       if (event.detail?.symbol) {
         sessionStorage.setItem("cerebro.market.symbol", event.detail.symbol);
         sessionStorage.setItem("cerebro.market.name", event.detail.name || "");
-        setActivePage("Markets");
+        navigate("Markets");
       }
+    };
+    const navigateEvent = event => {
+      const page = event.detail?.page;
+      if (page) navigate(page);
     };
 
     window.addEventListener("cerebro-open-market", openMarket);
-    return () => window.removeEventListener("cerebro-open-market", openMarket);
+    window.addEventListener("cerebro-navigate", navigateEvent);
+    return () => {
+      window.removeEventListener("cerebro-open-market", openMarket);
+      window.removeEventListener("cerebro-navigate", navigateEvent);
+    };
   }, []);
 
   const ready = system?.status === "READY";
@@ -92,20 +130,20 @@ function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand">
+        <button className="brand brandButton" onClick={() => navigate("Dashboard")} aria-label="Open dashboard">
           <CircleDollarSign size={27}/>
           <div>
             <strong>Cerebro</strong>
             <span>CerebroUI</span>
           </div>
-        </div>
+        </button>
 
         <nav>
           {nav.map(([name, Icon]) => (
             <button
               key={name}
               className={activePage === name ? "active" : ""}
-              onClick={() => setActivePage(name)}
+              onClick={() => navigate(name)}
             >
               <Icon size={19}/>
               {name}
@@ -123,7 +161,7 @@ function App() {
         <header>
           <div>
             <h1>{activePage}</h1>
-            <p>Cerebro trading control centre</p>
+            <p>Cerebro simulated-trading control centre</p>
           </div>
 
           <div className={`statusPill ${ready ? "ready" : "bad"}`}>
@@ -133,12 +171,7 @@ function App() {
         </header>
 
         {activePage === "Dashboard" ? (
-          <Dashboard
-            system={system}
-            portfolio={portfolio}
-            orders={orders}
-            openOrders={openOrders}
-          />
+          <Dashboard system={system} portfolio={portfolio} orders={orders} openOrders={openOrders}/>
         ) : activePage === "Markets" ? (
           <Markets />
         ) : activePage === "Orders" ? (
@@ -153,12 +186,7 @@ function App() {
           <Activity />
         ) : activePage === "Settings" ? (
           <Settings />
-        ) : (
-          <div className="placeholder">
-            <h2>{activePage}</h2>
-            <p>This module will be added next.</p>
-          </div>
-        )}
+        ) : null}
       </main>
     </div>
   );
@@ -167,16 +195,11 @@ function App() {
 function Dashboard({ system, portfolio, orders, openOrders }) {
   const account = portfolio?.account;
   const positions = portfolio?.positions ?? [];
-  const latestOrder = orders?.orders?.length
-    ? orders.orders[orders.orders.length - 1]
-    : null;
+  const latestOrder = orders?.orders?.length ? orders.orders[0] : null;
 
   return (
     <div className="dashboardSections">
-      <CollapsibleSection
-        title="System Overview"
-        subtitle="Broker, market-data and account readiness."
-      >
+      <CollapsibleSection title="System Overview" subtitle="Broker, market-data and account readiness.">
         <section className="statusGrid">
           <StatusCard label="System" value={system?.status ?? "Loading"} good={system?.status === "READY"}/>
           <StatusCard label="OpenD" value={system?.opend?.connected ? "Connected" : "Disconnected"} good={system?.opend?.connected}/>
@@ -187,7 +210,6 @@ function Dashboard({ system, portfolio, orders, openOrders }) {
             good={system?.trading?.enabled}
           />
         </section>
-
         <section className="metricGrid">
           <Metric label="Portfolio Value" value={money(account?.total_value)}/>
           <Metric label="Cash" value={money(account?.cash)}/>
@@ -197,11 +219,7 @@ function Dashboard({ system, portfolio, orders, openOrders }) {
       </CollapsibleSection>
 
       <div className="lowerGrid">
-        <CollapsibleSection
-          title="Portfolio"
-          subtitle="Current paper-account summary."
-          actions={<span className="paperBadge">{account?.mode ?? "—"}</span>}
-        >
+        <CollapsibleSection title="Portfolio" subtitle="Current paper-account summary." actions={<span className="paperBadge">{account?.mode ?? "—"}</span>}>
           <div className="rows">
             <Row label="Total value" value={money(account?.total_value)}/>
             <Row label="Cash" value={money(account?.cash)}/>
@@ -210,18 +228,15 @@ function Dashboard({ system, portfolio, orders, openOrders }) {
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection
-          title="Recent Order"
-          subtitle="Most recently reported broker order."
-        >
+        <CollapsibleSection title="Recent Order" subtitle="Most recently reported broker order.">
           {latestOrder ? (
-            <div className="order">
+            <button className="order orderButton" onClick={() => window.dispatchEvent(new CustomEvent("cerebro-open-market", { detail: { symbol: latestOrder.symbol, name: latestOrder.name } }))}>
               <div>
                 <strong>{latestOrder.side} {latestOrder.quantity} {latestOrder.symbol}</strong>
                 <span>{latestOrder.name}</span>
               </div>
               <div className="orderStatus">{latestOrder.status}</div>
-            </div>
+            </button>
           ) : (
             <div className="empty">No orders yet</div>
           )}
@@ -235,30 +250,17 @@ function StatusCard({ label, value, good }) {
   return (
     <div className="statusCard">
       <div className="cardLabel">{label}</div>
-      <div className="statusValue">
-        <span className={`dot ${good ? "green" : "amber"}`}></span>
-        {value}
-      </div>
+      <div className="statusValue"><span className={`dot ${good ? "green" : "amber"}`}></span>{value}</div>
     </div>
   );
 }
 
 function Metric({ label, value }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
 }
 
 function Row({ label, value }) {
-  return (
-    <div className="row">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+  return <div className="row"><span>{label}</span><strong>{value}</strong></div>;
 }
 
 createRoot(document.getElementById("root")).render(<App />);
