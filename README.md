@@ -27,18 +27,18 @@ A manual AI decision run from **CerebroUI → Strategies** performs the full pip
 3. Deep-analyse the configured candidate pool using historical market data.
 4. Rank candidates with the configured multi-factor quant model.
 5. Persist the latest quant result.
-6. Build portfolio context from current paper positions, pending orders, watchlist, quant candidates, and AI memory.
-7. Run AI web research for relevant holdings / quant candidates.
+6. Build portfolio context from current paper positions, pending orders, watchlist, quant candidates, AI memory, and the currently configured deterministic risk limits.
+7. Run AI web research for relevant holdings / quant candidates. Transient rate-limit, timeout, connection, and 5xx failures are retried with exponential backoff and jitter before research is marked failed.
 8. Send the structured context to the configured decision model.
 9. Validate that the model returns exactly one allowed action for every candidate.
 10. Persist decisions and thesis updates.
 11. Convert actionable intents into deterministic whole-share order proposals.
 12. Run deterministic risk checks.
 13. Either:
-    - wait for **Approve / Reject** in CerebroUI (default), or
+    - wait for an **individual Approve / Reject decision on each actionable proposal** in CerebroUI (default), or
     - automatically submit risk-approved PAPER orders when **Authorize AI Auto-Execution** is enabled in Settings.
 
-AI never talks directly to the broker. Order sizing and risk approval remain deterministic Cerebro code.
+AI never talks directly to the broker. Order sizing, fresh pre-execution validation, and risk approval remain deterministic Cerebro code.
 
 ## Live workflow telemetry
 
@@ -49,13 +49,14 @@ The Strategies page polls workflow status while a manual run is active and shows
 - research-ready and research-error counts
 - symbols as research workers finish
 - number of research workers still in flight
+- research retry state for transient/rate-limit failures
 - decision-model request state and elapsed time
 - deterministic risk / proposal stage
 - an event stream covering quant, research, model, risk and approval stages
 
-The UI does **not** expose private model chain-of-thought. During the decision-model stage it shows that the request is active, how long it has been running, and the final structured decision output when complete.
+The UI does **not** expose private model chain-of-thought. During the decision-model stage it shows that the request is active, how long it has been running, and the final structured reasoning/output when complete.
 
-Quant progress is explicitly set to 100% when historical analysis finishes. The internal 99% cap is used only while a quant job is still actively processing, so the UI no longer appears stuck at 99% after the workflow has moved on to research.
+Quant progress is explicitly set to 100% when historical analysis finishes. The internal 99% cap is used only while a quant job is still actively processing.
 
 ## AI actions
 
@@ -63,12 +64,31 @@ The decision model can return:
 
 - `BUY` — open a new position
 - `ADD` — increase an existing holding
-- `HOLD` — keep the current holding
+- `HOLD` — keep an existing holding
 - `REDUCE` — reduce an existing holding without fully exiting
 - `SELL` — fully exit a holding
-- `WATCH` — keep a non-held candidate under observation
+- `WATCH` — no order now, but the non-held candidate remains interesting enough to monitor for a future trigger, better entry, event resolution, or stronger evidence
+- `IGNORE` — no order and no monitoring thesis is warranted for that non-held candidate in the current run
 
-Held symbols are constrained to `ADD / HOLD / REDUCE / SELL`; non-held symbols are constrained to `BUY / WATCH`.
+Held symbols are constrained to `ADD / HOLD / REDUCE / SELL`; non-held symbols are constrained to `BUY / WATCH / IGNORE`.
+
+The decision prompt explicitly tells the model to perform independent investment reasoning across quant signals, structured research, portfolio state, memory, uncertainty, and risk limits. Missing web research is not by itself a command to WATCH: the model must decide whether remaining evidence supports BUY, WATCH, or IGNORE without inventing facts.
+
+## Risk-aware AI context
+
+The decision context contains the deterministic execution policy, including:
+
+- trading/risk engine state
+- current PAPER execution boundary
+- maximum order value
+- maximum single-position percentage
+- maximum invested-capital percentage
+- minimum cash reserve percentage
+- maximum new positions per run
+- maximum order size relative to 60-day median turnover
+- current default order type and auto-execution state
+
+This does not give the AI authority over risk controls. It lets the model choose realistic target exposure instead of knowingly requesting sizing that the deterministic engine will reject. Every actionable proposal is still independently evaluated by Cerebro after the model responds, and risk is checked again with fresh broker/price state immediately before execution.
 
 ## Quant discovery and ranking
 
@@ -129,22 +149,28 @@ Changing the research model does not change the final portfolio decision model.
 
 ### OFF — default
 
-After a completed AI run, CerebroUI shows the full decision set, reasoning, target exposure, deterministic order proposal, and risk checks. Actionable proposals wait for a human choice:
+After a completed AI run, CerebroUI shows the full decision set, reasoning, research status, target exposure, deterministic order proposal, and risk checks.
 
-- **Approve & Execute** — submits only proposals that already passed deterministic risk checks.
-- **Reject** — submits none of the pending AI proposals.
+Every risk-approved actionable proposal has its own controls:
+
+- **Approve & Execute this order** — approves and submits only that proposal after a fresh deterministic risk check.
+- **Reject this decision** — rejects only that proposal and submits no order for it.
+
+Approving or rejecting one symbol never resolves another symbol's proposal. WATCH, IGNORE and HOLD decisions require no broker order. Risk-blocked proposals cannot be manually forced through the UI.
 
 ### ON
 
-Risk-approved PAPER proposals are submitted immediately after the AI decision completes. The decision summary remains visible, but Approve / Reject controls are not shown because execution has already occurred.
+Risk-approved PAPER proposals are submitted immediately after the AI decision completes. The decision summary remains visible, but manual Approve / Reject controls are not shown because execution has already occurred.
 
 ## CerebroUI presentation
 
-Reusable collapsible sections are used across the panel-heavy parts of the UI, including Dashboard, Strategies, Orders, Portfolio, Watchlist and Activity / Logs. Settings already uses collapsible subsection groups.
+Reusable collapsible sections are used across Dashboard, Strategies, Orders, Portfolio, Watchlist and Activity / Logs. Settings uses collapsible subsection groups.
 
 Large result sets use bounded scroll regions so quant rankings, AI decisions, activity history, order history and positions do not force the entire page to become excessively tall.
 
 Security links in quant results, research status, orders and positions open the corresponding symbol directly in **Markets**, reusing the same quote/chart detail view as a manual market search.
+
+Each AI decision is individually collapsible and shows its research status. READY research displays retained source count/cache state; failed research displays the actual returned error to make quota/rate-limit problems visible instead of silently appearing as “research unavailable.”
 
 ## Order management
 
@@ -199,7 +225,7 @@ Current deterministic checks include:
 - maximum number of new positions per AI run
 - maximum order value relative to 60-day median turnover when available
 
-Additional configured limits can be extended without changing the AI prompt.
+Risk-approved AI proposals are re-priced and re-evaluated against fresh account, position, pending-order, and market state immediately before order submission.
 
 ## Environment
 
@@ -251,8 +277,9 @@ docker compose up -d cerebro cerebroui
 - `GET /ai/decision/latest`
 - `DELETE /ai/decision/latest`
 - `DELETE /ai/decision/history` — destructive test-only AI memory reset
-- `POST /ai/decision/{run_id}/approve`
-- `POST /ai/decision/{run_id}/reject`
+- `POST /ai/decision/{run_id}/proposal/{decision_id}/approve`
+- `POST /ai/decision/{run_id}/proposal/{decision_id}/reject`
+- legacy batch approve/reject endpoints remain for compatibility but CerebroUI does not use them
 
 ### Orders
 
