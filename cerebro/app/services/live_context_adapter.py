@@ -1,5 +1,6 @@
 from types import MethodType
 
+from app.services.execution_context import build_execution_context
 from app.services.trading import trading
 
 
@@ -28,12 +29,18 @@ def install_live_context(ai_run_context):
         context = original_build(*args, **kwargs)
         account = trading.get_account_summary(refresh=False)
         mode = trading.mode().upper()
-        context.setdefault("run", {})["execution_environment"] = mode
+        execution_context = build_execution_context(mode=mode, account=account)
+
+        run = context.setdefault("run", {})
+        run["execution_environment"] = mode
+        run["execution_context_id"] = execution_context["context_id"]
+
         portfolio_account = context.setdefault("portfolio", {}).setdefault("account", {})
         portfolio_account.update({
             "mode": account.get("mode"),
-            "account_id_masked": account.get("account_id_masked"),
-            "security_firm": account.get("security_firm"),
+            "account_id_masked": execution_context.get("account_id_masked"),
+            "security_firm": execution_context.get("security_firm"),
+            "execution_context_id": execution_context.get("context_id"),
             "total_value": account.get("total_value"),
             "cash": account.get("cash"),
             "available_cash": account.get("available_cash"),
