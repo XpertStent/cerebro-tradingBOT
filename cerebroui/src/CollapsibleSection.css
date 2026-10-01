@@ -73,6 +73,13 @@
   padding: 16px 18px 18px;
 }
 
+.collapsibleFooter {
+  padding: 12px 18px 14px;
+  border-top: 1px solid #edf1f5;
+  background: #fff;
+  box-shadow: 0 -8px 18px rgba(15,23,42,.025);
+}
+
 .scrollRegion {
   overflow: auto;
   max-height: min(58vh, 640px);
@@ -100,5 +107,9 @@
 
   .collapsibleBody {
     padding: 14px;
+  }
+
+  .collapsibleFooter {
+    padding: 12px 14px 14px;
   }
 }
