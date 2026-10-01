@@ -215,6 +215,22 @@ main,
 .activityHeaderActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .activityExpandButton { min-height: 36px; }
 
+/* style.css historically made .activityEvent a two-column grid. That worked for
+   the old div markup, but a <details> element then placed its summary into the
+   12px grid column and rendered the message one character per line. Reset the
+   event container here and let the summary own its internal layout. */
+.activityTimeline .activityEvent {
+  display: block !important;
+  grid-template-columns: none !important;
+  width: 100%;
+  min-width: 0;
+  padding: 0 0 14px 0;
+}
+
+.activityTimeline .activityEvent:not(:last-child)::before {
+  display: none;
+}
+
 .activityEventClickable {
   cursor: pointer;
   width: 100%;
@@ -226,20 +242,22 @@ main,
   gap: 12px;
   width: 100%;
   min-width: 0;
+  padding: 10px 2px;
   list-style: none;
 }
 
 .activityEventClickable > summary::-webkit-details-marker { display: none; }
 .activityEventClickable[open] { background: #fbfdff; }
-.activityEventBody { flex: 1 1 auto; min-width: 0; width: 100%; }
+.activityEventBody { flex: 1 1 auto; min-width: 0; width: auto; }
 .activityEventTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; min-width: 0; }
 .activityEventTitle { flex: 1 1 auto; min-width: 0; }
 .activityEventTitle strong { display: block; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
 .activityEventTop time { flex: 0 0 auto; white-space: nowrap; }
 .activityMeta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.activityTimeline .activityDot { flex: 0 0 9px; }
 
 .activityEventDetails {
-  margin: 11px 0 0 22px;
+  margin: 0 0 6px 22px;
   padding: 12px;
   background: #f8fafc;
   border: 1px solid #e7edf4;
