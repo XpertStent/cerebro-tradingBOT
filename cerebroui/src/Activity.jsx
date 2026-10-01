@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity as ActivityIcon,
+  ChevronsDownUp,
+  ChevronsUpDown,
   ExternalLink,
   RefreshCw,
   Search
@@ -29,6 +31,7 @@ export default function Activity() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
 
   const categories = useMemo(() => {
     const dynamic = events.map(item => item.category).filter(Boolean);
@@ -46,6 +49,10 @@ export default function Activity() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || `Activity failed (${r.status})`);
       setEvents(d.events || []);
+      setExpandedIds(previous => {
+        const valid = new Set((d.events || []).map(item => item.id));
+        return new Set([...previous].filter(id => valid.has(id)));
+      });
       setError(null);
     } catch (e) {
       setError(e.message || "Could not load activity.");
@@ -60,6 +67,23 @@ export default function Activity() {
     return () => clearInterval(timer);
   }, [category, level]);
 
+  function setEventOpen(id, open) {
+    setExpandedIds(previous => {
+      const next = new Set(previous);
+      if (open) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function expandAll() {
+    setExpandedIds(new Set(events.map(event => event.id)));
+  }
+
+  function collapseAll() {
+    setExpandedIds(new Set());
+  }
+
   function openSymbol(event) {
     if (!event.symbol) return;
     window.dispatchEvent(new CustomEvent("cerebro-open-market", {
@@ -71,6 +95,8 @@ export default function Activity() {
     if (orderId) sessionStorage.setItem("cerebro.orders.focus", String(orderId));
     window.dispatchEvent(new CustomEvent("cerebro-navigate", { detail: { page: "Orders" } }));
   }
+
+  const allExpanded = events.length > 0 && expandedIds.size === events.length;
 
   return (
     <div className="activityPage">
@@ -106,15 +132,24 @@ export default function Activity() {
 
       <CollapsibleSection
         title="Activity Timeline"
-        subtitle="Persistent Cerebro audit trail. Click an event to inspect its full context."
+        subtitle="Persistent Cerebro audit trail. Events stay collapsed until you open the one you want."
         actions={
-          <>
+          <div className="activityHeaderActions">
             <span>{events.length} events</span>
+            <button
+              type="button"
+              className="activityExpandButton"
+              onClick={allExpanded ? collapseAll : expandAll}
+              disabled={events.length === 0}
+            >
+              {allExpanded ? <ChevronsDownUp size={15}/> : <ChevronsUpDown size={15}/>}
+              {allExpanded ? "Collapse all" : "Expand all"}
+            </button>
             <button onClick={() => loadActivity()} className="activityRefresh" disabled={loading}>
               <RefreshCw size={15}/>
               {loading ? "Loading…" : "Refresh"}
             </button>
-          </>
+          </div>
         }
         bodyClassName="scrollRegion"
       >
@@ -128,12 +163,17 @@ export default function Activity() {
             events.map(event => {
               const details = formatDetails(event.details);
               return (
-                <details className="activityEvent activityEventClickable" key={event.id}>
+                <details
+                  className="activityEvent activityEventClickable"
+                  key={event.id}
+                  open={expandedIds.has(event.id)}
+                  onToggle={e => setEventOpen(event.id, e.currentTarget.open)}
+                >
                   <summary>
                     <div className={`activityDot ${String(event.level || "info").toLowerCase()}`}/>
                     <div className="activityEventBody">
                       <div className="activityEventTop">
-                        <div>
+                        <div className="activityEventTitle">
                           <span className="activityCategory">{event.category}</span>
                           <strong>{event.message}</strong>
                         </div>
