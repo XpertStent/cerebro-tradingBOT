@@ -1,38 +1,212 @@
-# Cerebro / Moomoo OpenD Trading Stack
+# Cerebro TradingBOT
 
-Cerebro is a Docker-based US-equity research and PAPER-trading control system built around Moomoo OpenD. It combines market discovery, historical quant ranking, clustered AI research/news, structured portfolio decisions, deterministic risk controls, persistent AI memory, order management, and a React control UI.
+Cerebro is a Docker-based US-equity research and trading control stack built around Moomoo OpenD. It combines market discovery, historical quant ranking, clustered AI research/news, structured portfolio decisions, deterministic risk controls, persistent AI memory, order management, portfolio monitoring, activity auditing, and a React control UI.
 
-> **Execution boundary:** this build is PAPER / simulated trading only. Live brokerage execution is deliberately blocked until a separate live-trading phase is implemented and validated.
+## Branch policy
+
+`main` is the stable PAPER-only checkpoint and is intentionally left untouched during LIVE-trading development.
+
+`feature/live-trading` is the only active development branch for the LIVE implementation. Deploy this branch when testing the functionality documented below.
+
+## Execution environments
+
+Cerebro now has two broker execution environments on `feature/live-trading`:
+
+- **PAPER** — uses the Moomoo simulated account and does not require trade unlock.
+- **LIVE** — uses an explicitly selected ACTIVE REAL account with US trading permission and requires OpenD trade unlock before broker actions.
+
+Changing the mode changes the account used by Portfolio, Orders, AI decision context, deterministic sizing, risk checks, order history, cancellation and execution. PAPER and LIVE balances are never mixed.
 
 ## Services
 
 | Service | Purpose | Host access |
 | --- | --- | --- |
-| `opend` | Moomoo OpenD gateway | API 11111 internally |
+| `opend` | Moomoo OpenD gateway | API `11111` internally |
 | `login-ui` | OpenD login/status helper | `:6789` |
-| `cerebro` | FastAPI backend, quant, AI, risk, memory and PAPER execution | `:7000` through the shared OpenD network namespace |
+| `cerebro` | FastAPI backend, quant, AI, risk, memory and PAPER/LIVE execution | `:7000` through the shared OpenD network namespace |
 | `cerebroui` | React control UI | `:7100` |
 
-Persistent state lives in Docker volumes. `cerebro-data` contains SQLite state, latest quant/AI artifacts, market/history caches and the AI research cache.
+Persistent state lives in Docker volumes. `cerebro-data` contains SQLite state, latest quant/AI artifacts, market/history caches, research cache, activity history, settings and the selected LIVE account id. The trade-unlock credential is **not** stored in SQLite.
 
-## Manual AI workflow
+## LIVE account discovery
 
-**CerebroUI → Strategies → Run AI Decision** runs the full pipeline:
+Cerebro discovers Moomoo trade accounts through OpenD and separates SIMULATE from REAL accounts. LIVE selection is restricted to accounts that are:
+
+1. REAL,
+2. ACTIVE, and
+3. authorized for the US market.
+
+The broker/security-firm is discovered per account instead of assuming one hard-coded regional firm. The current implementation checks Moomoo/Futu security-firm values exposed by the installed API package, including US and Australian variants when supported.
+
+If exactly one eligible LIVE account exists, Cerebro can select it automatically. If several are available, the operator must choose one in the **Unlock Trading** control. The selected LIVE account id is persisted so a restart does not silently switch accounts.
+
+## LIVE trade unlock
+
+The CerebroUI header displays a persistent execution badge:
+
+- `PAPER` in simulated mode,
+- `LIVE TRADING` in real-money mode.
+
+When LIVE mode is active, the top-right **Unlock Trading** button becomes available. The dialog lets the operator choose the eligible REAL account and asks the backend to unlock OpenD.
+
+For security, the browser does not collect or store the raw Moomoo transaction credential. Configure the MD5 form on the `cerebro` container as:
+
+```text
+MOOMOO_TRADING_PASSWORD_MD5=<your-md5-value>
+```
+
+The value is read only from the backend container environment and passed to OpenD for unlock. Do not commit it to this repository. `.env` is ignored by Git.
+
+A broker action that encounters a locked OpenD session automatically pauses in the UI, opens the same unlock dialog, and retries the original request after a successful unlock. This covers manual order placement, order cancellation and AI broker execution. WATCH decisions do not require broker unlock because they only update Cerebro's monitored securities.
+
+The header can also explicitly lock LIVE trading again.
+
+## Portainer deployment
+
+Point the Portainer Git stack at:
+
+```text
+https://github.com/XpertStent/cerebro-tradingBOT.git
+```
+
+and use:
+
+```text
+refs/heads/feature/live-trading
+```
+
+For LIVE testing, add the following environment variable to the stack/Portainer environment without placing the value in Git:
+
+```text
+MOOMOO_TRADING_PASSWORD_MD5=<value>
+```
+
+Then redeploy/rebuild the stack. Existing OpenAI variables continue to work as before.
+
+## Trading mode
+
+Use **Settings → General → Trading → Trading Mode** to choose `paper` or `live`.
+
+`trading.enabled` remains the master execution kill switch. If it is OFF, deterministic risk blocks new orders in either environment.
+
+Switching the execution mode clears broker/account caches and resets Cerebro's local unlock state. This prevents an unlock state from being carried across an environment change.
+
+## Why the smaller LIVE account behaves differently from the $1M PAPER account
+
+The simulated account can be much larger than the real account, so Cerebro does not reuse the PAPER account's nominal dollar sizing.
+
+AI sizing is expressed as a percentage of the **currently selected account's actual total value**. For example, a 10% target is calculated from the REAL account when LIVE is active, not from the simulated portfolio.
+
+The deterministic risk engine also scales BUY capacity to the active account. The effective maximum BUY order is the lower of:
+
+```text
+configured risk.max_order_value
+```
+
+and:
+
+```text
+current portfolio value × risk.max_position_pct
+```
+
+This means a `$1,000` absolute PAPER-era ceiling cannot automatically force a `$1,000` order into a small real account.
+
+LIVE/PAPER risk evaluation also checks:
+
+- positive whole-share quantity,
+- available funds,
+- maximum single-position percentage,
+- maximum invested percentage,
+- minimum cash reserve percentage,
+- maximum order / median turnover where research data is available,
+- long-only SELL quantity against available shares,
+- broker-reported realized-P&L loss guard when that value is available,
+- duplicate pending-order prevention in the AI path,
+- maximum new positions per AI run.
+
+Cerebro continues to execute whole shares. If an explicit AI BUY/ADD target rounds below one whole share, the existing one-share normalization can propose one share, but that share must still pass all current-account risk checks. On a small LIVE account, an expensive one-share position can therefore be blocked automatically.
+
+## Manual order flow
+
+**Orders → New Order** now uses the selected execution environment.
+
+The preview refreshes the account and positions and shows:
+
+- PAPER/LIVE environment,
+- masked selected account,
+- portfolio value,
+- available funds,
+- estimated order value,
+- projected cash,
+- effective account-scaled order limit,
+- every deterministic risk check.
+
+LIVE execution displays a real-money confirmation before submission. If OpenD is locked, the request pauses, the unlock dialog opens, and the original order is retried only after unlock succeeds.
+
+Order cancellation follows the same environment and unlock rules.
+
+## Order history
+
+The Orders table is sourced from the active OpenD account. Every returned order contains its execution environment and account id in the backend representation, and the UI displays an explicit PAPER/LIVE environment badge.
+
+Manual Cerebro orders use broker remarks similar to:
+
+```text
+CEREBRO:MANUAL:LIVE
+CEREBRO:MANUAL:PAPER
+```
+
+AI orders use:
+
+```text
+CEREBRO:AI:<decision-id>
+```
+
+This makes Cerebro-originated orders easier to reconcile with broker history.
+
+## Portfolio
+
+Portfolio automatically switches to the selected PAPER or LIVE account and displays:
+
+- environment,
+- masked account id,
+- security firm,
+- total value,
+- cash,
+- available funds,
+- market value,
+- realized/unrealized P&L,
+- current positions and available sell quantity.
+
+The Dashboard uses the same account and does not retain the $1M simulated values after LIVE mode is selected.
+
+## AI decision workflow
+
+**CerebroUI → Strategies → Run AI Decision** continues to run the full pipeline:
 
 1. Refresh the eligible US equity universe.
 2. Run independent discovery screens.
 3. Perform historical analysis and multi-factor ranking.
 4. Persist the fresh quant result.
-5. Build decision context from current PAPER account state, held positions, pending orders, watchlist, quant candidates, fresh market snapshots, AI memory and current deterministic risk settings.
-6. Research holdings/candidates using the configured **Research / News Model** in clustered web-research requests.
-7. Run one structured **Decision-Making Model** request across the complete portfolio context. By default, the final decision model also has its own live web-search tool so it can independently verify or augment the upstream research before deciding.
-8. Validate the returned decisions and persist decision/thesis memory.
+5. Build decision context from the **currently selected PAPER or LIVE account**, held positions, pending orders, watchlist, quant candidates, market snapshots, AI memory and deterministic risk settings.
+6. Research holdings/candidates using clustered web-research requests.
+7. Run one structured portfolio decision-model request with optional independent live web verification.
+8. Validate and persist decisions/theses.
 9. Convert actionable decisions into deterministic whole-share proposals.
-10. Apply deterministic portfolio/risk controls.
-11. With auto-execution OFF (default), wait for per-decision approval/rejection. With auto-execution ON, submit only risk-valid PAPER orders.
-12. Re-price and re-run risk checks immediately before every broker submission.
+10. Apply account-aware risk controls.
+11. With auto-execution OFF, wait for individual/bulk approval.
+12. Immediately before broker submission, refresh account/positions/price and repeat deterministic execution checks.
+13. Submit through the selected PAPER or LIVE environment.
 
-The AI does not directly control the broker. Sizing, duplicate-order prevention, execution mode and final risk validation remain deterministic Cerebro code.
+The AI never receives direct broker authority. Sizing and final broker execution remain deterministic application code.
+
+### LIVE AI execution
+
+When `execution.auto_execute` is OFF, AI proposals behave exactly like the established manual-approval workflow. Approving a BUY/ADD/REDUCE/SELL in LIVE mode submits a REAL order after fresh checks and unlock.
+
+If LIVE mode is locked when a run was configured for auto-execution, Cerebro defers automatic broker execution and leaves actionable proposals for manual approval instead of failing the whole AI run or bypassing unlock.
+
+If LIVE mode is already deliberately unlocked and `execution.auto_execute` is enabled, approved deterministic AI broker actions can reach the REAL account. Keep this option OFF unless that behavior is explicitly intended.
 
 ## AI actions
 
@@ -43,187 +217,83 @@ The decision model can return:
 - `HOLD` — retain an existing holding
 - `REDUCE` — partially reduce an existing holding
 - `SELL` — exit an existing holding
-- `WATCH` — no order now, but keep the non-held symbol under consideration
+- `WATCH` — no broker order; retain a non-held symbol for future runs
 - `IGNORE` — dismiss the non-held symbol for the current run
 
 Held symbols are constrained to `ADD / HOLD / REDUCE / SELL`. Non-held symbols are constrained to `BUY / WATCH / IGNORE`.
 
-The prompt explicitly allows independent investment analysis using quant signals, market snapshots, clustered research/news, portfolio state, memory, deterministic risk policy and, when enabled, the decision model's own live web verification. Missing upstream research is not treated as an automatic WATCH instruction.
+## Activity and audit trail
 
-## Clustered research/news and rate limits
+Activity remains persisted in SQLite and now records execution-specific information for LIVE/PAPER events. Broker/order/AI records can include:
 
-Research/news is batched dynamically instead of sending one OpenAI request per symbol. **Settings → AI & Models → Research → Parallel Research Clusters** controls the number of concurrent balanced research requests.
+- environment,
+- selected account id,
+- security firm,
+- source (`MANUAL` or `AI`),
+- symbol,
+- order id,
+- broker status,
+- deterministic risk result.
 
-Example: 30 research symbols with 4 clusters are split approximately `8 + 8 + 7 + 7`. Cached research is removed before clustering, so repeat runs may require fewer API calls.
+Additional security/broker events include LIVE account selection, successful unlock, failed unlock, explicit lock and locked trade attempts.
 
-Transient OpenAI failures are retried. For a provider response such as `Please try again in 425ms`, Cerebro waits the provider-specified delay **plus a 1-second safety buffer** before retrying. `Retry-After` headers are preferred when present. If no provider delay is available, Cerebro falls back to exponential backoff with jitter for rate-limit, timeout, connection and retryable 5xx failures.
+The UI's Activity / Logs page continues to expose event search, category/level filtering and detailed payload expansion.
 
-The final decision request uses the same retry mechanism, so a TPM/RPM burst during portfolio analysis does not immediately fail the entire run.
+## API additions
 
-### Decision-model web verification
-
-The final decision model has separate runtime settings under **AI & Models → Decision Model**:
-
-- **Decision Model Web Research** — default ON
-- **Decision Web Search Context Size** — low / medium / high
-
-This is intentionally separate from the clustered research stage. The upstream research model gathers structured company/news evidence, while the final decision model may independently verify recent material facts, investigate failed research gaps, or resolve conflicting evidence before returning the final portfolio decisions.
-
-The Strategies page reports whether final decision web verification is active and, after completion, how many decision-model web-search calls / unique observed sources were used.
-
-## Decision and approval behaviour
-
-`execution.auto_execute` / **Authorize AI Auto-Execution** defaults to OFF.
-
-When OFF, each actionable risk-approved proposal has its own:
-
-- **Approve & Execute this order**
-- **Reject this decision**
-
-Resolving one decision does not resolve the others. The page also provides **Approve All Remaining** and **Reject All Remaining** conveniences; these still process the remaining proposals individually so each approval receives the same fresh broker/price/risk validation.
-
-When auto-execution is ON, approval controls are omitted for that run because risk-approved PAPER proposals are executed immediately. Live execution remains blocked.
-
-## Deterministic risk context
-
-The model is informed about the current execution policy so it can propose realistic allocations, including trading/risk state, PAPER-only mode, maximum order value, maximum position percentage, maximum invested percentage, minimum cash reserve, maximum new positions per run, liquidity limits, default order type and auto-execution state.
-
-These values are context, not authority. Cerebro independently enforces the risk engine after the model response and again immediately before broker submission.
-
-## CerebroUI
-
-The UI is organized around Dashboard, Markets, Watchlist, Strategies, Orders, Portfolio, Activity / Logs and Settings.
-
-Navigation uses hash routes such as `#/strategies` and `#/orders`, so browser refresh, Back and Forward preserve the selected module instead of returning to Dashboard. Cross-module links use the same navigation layer; order/portfolio/watchlist/AI symbols can open directly in Markets.
-
-Reusable collapsible sections and bounded scroll regions are used for large datasets. Nested result panes deliberately use normal scroll chaining: when an inner list reaches its top or bottom, mouse-wheel scrolling continues on the main page instead of trapping the pointer inside that section.
-
-### Strategies research inspection
-
-**Live Research Status** is an in-place inspector, not a navigation shortcut. Clicking a research symbol keeps you on Strategies and shows the stored result, retry state, cache status, or exact error payload underneath the status grid. Research-error cards also expand in place.
-
-Large quant and AI-decision lists remain internally scrollable, but scroll control hands back to the page at their boundaries.
-
-### Watchlist
-
-The Watchlist supports live ticker/company suggestions, explicit Search button and Enter-to-search, manual Add / Remove, direct Markets navigation, batched live snapshots, current traded price/change/% change, graceful quote failures and short-lived server-side search caching.
-
-### Activity / Logs
-
-The Activity page combines the persistent SQLite audit trail with live events from an active AI workflow. It supports:
-
-- text search
-- category and level filters
-- automatic refresh
-- events collapsed by default
-- individual event expansion
-- **Expand all / Collapse all** controls
-- raw structured event details
-- symbol/order metadata
-- deep links back to Markets or Orders
-
-Live quant/research/model/risk workflow events appear while a run is in progress; durable audit entries remain stored separately in SQLite for important workflow/order/watchlist actions.
-
-### Orders and Portfolio
-
-Orders supports manual symbol search, risk preview, PAPER execution, pending-order cancellation and direct symbol navigation. Portfolio positions also link directly to the Markets detail/chart page.
-
-## Stored results and testing controls
-
-Strategies provides separate controls for:
-
-- **Clear Quant** — remove the latest quant artifact
-- **Clear AI Result** — remove the latest displayed/persisted AI result
-- **Clear All AI History** — destructive test reset for AI runs, decisions, outcomes and thesis memory
-
-The all-history reset intentionally does not delete broker orders, settings, watchlist, activity logs, market-history caches or quant artifacts.
-
-A manual AI run always performs a fresh quant pass before the AI stages.
-
-## Settings
-
-Settings are SQLite-backed and most behaviour is runtime configurable without rebuilding containers. Important groups include discovery limits, quant weights, data-quality filters, research model, **Parallel Research Clusters**, decision model/reasoning effort, **Decision Model Web Research**, AI context limits, deterministic portfolio/risk limits and execution controls.
-
-The OpenAI API key is treated as a secret and is not returned to the browser.
-
-## Start / redeploy
-
-```bash
-docker compose up -d --build
-```
-
-For backend/UI-only rebuilds:
-
-```bash
-docker compose build cerebro cerebroui
-docker compose up -d cerebro cerebroui
-```
-
-For Portainer GitOps testing of this feature branch:
+LIVE development adds:
 
 ```text
-Repository: https://github.com/XpertStent/moomoo-opend.git
-Reference:  refs/heads/feature/ai-decision-engine
+GET  /api/trading/status
+GET  /api/trading/accounts
+POST /api/trading/account
+POST /api/trading/unlock
+POST /api/trading/lock
 ```
 
-## Useful API endpoints
+Existing APIs such as `/api/portfolio/`, `/api/orders/`, `/api/orders/preview` and `/api/orders/execute` are now environment-aware.
 
-### System
+A locked broker action returns an unlock-required response. CerebroUI recognizes both the dedicated locked response and the AI API's propagated unlock marker, opens the unlock control, and can retry the original action after unlock.
 
-- `GET /health`
-- `GET /system/status`
+## Safety boundaries currently kept intentionally
 
-### Market / watchlist
+The first LIVE implementation is deliberately conservative:
 
-- `GET /market/search`
-- `GET /market/snapshots`
-- `GET /market/{symbol}`
-- `GET /market/{symbol}/candles`
-- `GET /watchlist/`
-- `POST /watchlist/`
-- `DELETE /watchlist/{symbol}`
+- whole shares only,
+- long-only order validation,
+- no automatic short creation,
+- no options execution,
+- no independent margin-sizing logic,
+- `trading.enabled` remains a master kill switch,
+- deterministic risk remains mandatory,
+- selected account must be REAL, ACTIVE and US-authorized,
+- live unlock is explicit and can be re-locked from the UI.
 
-### Quant
+Broker/account permissions still have final authority. A request passing Cerebro risk can still be refused by Moomoo/OpenD.
 
-- `POST /quant/run`
-- `GET /quant/progress/{run_id}`
-- `GET /quant/result/{run_id}`
-- `GET /quant/latest`
-- `DELETE /quant/latest`
+## First LIVE test checklist
 
-### AI decision engine
+Before testing a real order:
 
-- `POST /ai/decision/run`
-- `GET /ai/decision/progress/{run_id}`
-- `GET /ai/decision/result/{run_id}`
-- `GET /ai/decision/latest`
-- `DELETE /ai/decision/latest`
-- `DELETE /ai/decision/history`
-- `POST /ai/decision/{run_id}/proposal/{decision_id}/approve`
-- `POST /ai/decision/{run_id}/proposal/{decision_id}/reject`
+1. Deploy `feature/live-trading`, not `main`.
+2. Confirm OpenD is logged in.
+3. Configure `MOOMOO_TRADING_PASSWORD_MD5` in Portainer; never commit it.
+4. Leave `execution.auto_execute` OFF.
+5. In Settings, switch `trading.mode` to `live` and save.
+6. Confirm the red `LIVE TRADING` badge appears.
+7. Click **Unlock Trading**.
+8. Confirm the expected REAL account/security firm appears; select it.
+9. Unlock and verify the header shows `Unlocked`.
+10. Open Portfolio and verify the balance/positions match the REAL account rather than the simulated $1M account.
+11. In Orders, preview a deliberately small whole-share order first.
+12. Verify effective order limit, available-funds, position %, cash-reserve and other checks before considering submission.
+13. Confirm LIVE order history and Activity show the resulting environment/account/order information.
+14. Use the header control to lock trading again after testing.
 
-Legacy run-level approve/reject endpoints remain available for compatibility. CerebroUI bulk controls intentionally resolve proposals through the individual proposal endpoints.
+## Returning to PAPER
 
-### Orders
+Change **Trading Mode** back to `paper`. Cerebro clears the live unlock state and resumes using the SIMULATE account for Portfolio, Orders and AI context. No LIVE account balance is used for PAPER sizing.
 
-- `GET /orders/`
-- `POST /orders/preview`
-- `POST /orders/execute`
-- `DELETE /orders/{order_id}`
+## Development note
 
-### Activity / Settings
-
-- `GET /activity/`
-- `GET /settings`
-- `PUT /settings`
-- `POST /settings/reset`
-
-FastAPI documentation is available from Cerebro at `/docs`.
-
-## Validation
-
-GitHub Actions validates feature pushes by compiling all Python under `cerebro/app`, installing CerebroUI dependencies and building the React production bundle. CI verifies syntax/build integrity; the final branch still needs a real local OpenD PAPER smoke test because CI cannot exercise a logged-in broker or external OpenAI request.
-
-## Safety boundary
-
-This branch is intended for simulated trading. UI actions, model output and API callers cannot intentionally bypass the deterministic PAPER-only execution boundary. Live trading requires separate account selection, unlock/safeguards and dedicated validation before it should be enabled.
+Do not merge this LIVE implementation to `main` until it has been validated against the intended OpenD/Moomoo account setup. The stable branch remains the known-good PAPER checkpoint by design.
