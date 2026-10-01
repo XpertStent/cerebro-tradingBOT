@@ -128,6 +128,10 @@ class AIRunContextBuilder:
                 and str(item.get("market") or "").upper() in {"", "US"}
                 and str(item.get("symbol", "")).upper().startswith("US.")
             ]
+        watch_by_symbol = {
+            str(item.get("symbol") or "").upper(): item
+            for item in watch_items if item.get("symbol")
+        }
 
         positions = [self._compact_position(item) for item in positions_raw]
         latest_quant_data = latest_quant.load() or {}
@@ -150,7 +154,8 @@ class AIRunContextBuilder:
         symbols = []
 
         def add_symbol(symbol):
-            if symbol and str(symbol).startswith("US.") and symbol not in symbols:
+            symbol = str(symbol or "").upper()
+            if symbol.startswith("US.") and symbol not in symbols:
                 symbols.append(symbol)
 
         for item in positions_raw:
@@ -160,25 +165,25 @@ class AIRunContextBuilder:
         for item in quant_candidates:
             add_symbol(item.get("symbol"))
 
-        mandatory_count = len(symbols)
-        optional_slots = max(0, int(max_candidates) - mandatory_count)
-        optional_watch_symbols = []
+        base_candidate_count = len(symbols)
+
+        # Monitored Securities are persistent operator/AI monitoring intent, so
+        # they are not silently dropped merely because the quant list filled the
+        # soft candidate target. The target remains informational/soft; held,
+        # pending, quant and enabled watchlist names may legitimately exceed it.
         for item in watch_items:
-            symbol = item.get("symbol")
-            if symbol and symbol not in symbols and symbol not in optional_watch_symbols:
-                optional_watch_symbols.append(symbol)
-        symbols.extend(optional_watch_symbols[:optional_slots])
+            add_symbol(item.get("symbol"))
 
-        held_symbols = {item.get("symbol") for item in positions_raw if item.get("symbol")}
-        watch_symbols = {item.get("symbol") for item in watch_items if item.get("symbol")}
-        pending_symbols = {item.get("symbol") for item in pending_orders if item.get("symbol")}
+        held_symbols = {str(item.get("symbol") or "").upper() for item in positions_raw if item.get("symbol")}
+        watch_symbols = set(watch_by_symbol.keys())
+        pending_symbols = {str(item.get("symbol") or "").upper() for item in pending_orders if item.get("symbol")}
 
-        # Held names and quant candidates are always research-eligible. One
-        # OpenD snapshot request supplies fresh market data for all of them,
-        # including holdings that are not present in the quant Top-N.
+        # Held names, quant candidates and all enabled monitored securities are
+        # research-eligible. One OpenD snapshot request supplies fresh market
+        # data before clustered research and final portfolio reasoning.
         research_symbols = [
             symbol for symbol in symbols
-            if symbol in held_symbols or symbol in quant_symbols
+            if symbol in held_symbols or symbol in quant_symbols or symbol in watch_symbols
         ]
         snapshots_by_symbol = self._market_snapshots(research_symbols)
 
@@ -190,11 +195,13 @@ class AIRunContextBuilder:
                 company_name = quant_item.get("name")
                 if not company_name:
                     position_item = next(
-                        (item for item in positions_raw if item.get("symbol") == symbol),
+                        (item for item in positions_raw if str(item.get("symbol") or "").upper() == symbol),
                         None,
                     )
                     if position_item:
                         company_name = position_item.get("name")
+                if not company_name:
+                    company_name = (watch_by_symbol.get(symbol) or {}).get("name")
 
                 relationships = []
                 if symbol in held_symbols:
@@ -236,6 +243,8 @@ class AIRunContextBuilder:
                 relationship = "HELD"
             elif symbol in pending_symbols:
                 relationship = "PENDING_ORDER"
+            elif symbol in quant_symbols and symbol in watch_symbols:
+                relationship = "QUANT_AND_WATCHLIST"
             elif symbol in quant_symbols:
                 relationship = "QUANT_CANDIDATE"
             else:
@@ -286,21 +295,22 @@ class AIRunContextBuilder:
                 "quant": quant_context,
                 "research_context": research_by_symbol.get(symbol),
                 "event_review": event_review,
-                "watchlist": memory.get("watchlist"),
+                "watchlist": watch_by_symbol.get(symbol) or memory.get("watchlist"),
                 "active_thesis": memory.get("active_thesis"),
                 "recent_decisions": memory.get("recent_decisions"),
                 "rejection_summary": memory.get("rejection_summary"),
             })
 
         return {
-            "schema_version": 4,
+            "schema_version": 5,
             "run": {
                 "type": run_type.upper(),
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "scope": "US",
                 "candidate_count": len(candidates),
-                "mandatory_candidate_count": mandatory_count,
-                "optional_watchlist_count": max(0, len(candidates) - mandatory_count),
+                "soft_candidate_target": int(max_candidates),
+                "base_candidate_count": base_candidate_count,
+                "watchlist_candidate_count": len(watch_symbols),
                 "research_enabled": bool(enrich_research),
                 "research_request_count": len(research_requests),
                 "research_parallel_batches": (
