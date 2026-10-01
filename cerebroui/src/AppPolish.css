@@ -48,16 +48,19 @@ main,
   cursor: pointer;
 }
 
+/* Nested result panes scroll themselves, then naturally hand wheel scrolling
+   back to the page when their top/bottom edge is reached. */
 .scrollRegion,
 .ordersScrollable {
-  max-height: min(62vh, 720px);
+  max-height: min(68vh, 780px);
   overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable both-edges;
+  overscroll-behavior: auto;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
 }
 
 .scrollRegion.compact {
-  max-height: min(44vh, 460px);
+  max-height: min(50vh, 520px);
 }
 
 .watchlistSearchBar,
@@ -98,6 +101,7 @@ main,
 .activityRefresh,
 .activitySearchButton,
 .activityLinkButton,
+.activityExpandButton,
 .watchlistResultAction,
 .watchlistActions button {
   display: inline-flex;
@@ -123,7 +127,8 @@ main,
 
 .watchlistSearchButton:disabled,
 .watchlistRefresh:disabled,
-.activityRefresh:disabled {
+.activityRefresh:disabled,
+.activityExpandButton:disabled {
   opacity: .55;
   cursor: wait;
 }
@@ -136,6 +141,7 @@ main,
   top: calc(100% + 6px);
   max-height: 360px;
   overflow: auto;
+  overscroll-behavior: auto;
   border: 1px solid #dce3ec;
   border-radius: 12px;
   background: #fff;
@@ -151,20 +157,10 @@ main,
   border-bottom: 1px solid #edf1f5;
 }
 
-.watchlistResultRow:last-child {
-  border-bottom: 0;
-}
-
-.watchlistResultIdentity {
-  min-width: 0;
-  cursor: pointer;
-}
-
+.watchlistResultRow:last-child { border-bottom: 0; }
+.watchlistResultIdentity { min-width: 0; cursor: pointer; }
 .watchlistResultIdentity strong,
-.watchlistResultIdentity span {
-  display: block;
-}
-
+.watchlistResultIdentity span { display: block; }
 .watchlistResultIdentity span {
   color: #748094;
   font-size: 13px;
@@ -188,14 +184,9 @@ main,
   font-size: 13px;
 }
 
-.watchlistSearchHint {
-  color: #748094;
-}
-
+.watchlistSearchHint { color: #748094; }
 .watchlistError,
-.activityError {
-  color: #b91c1c;
-}
+.activityError { color: #b91c1c; }
 
 .watchlistRow {
   grid-template-columns: minmax(150px, 1.15fr) minmax(130px, .75fr) minmax(120px, .8fr) minmax(220px, 1.65fr) auto !important;
@@ -211,63 +202,41 @@ main,
   color: inherit;
 }
 
-.watchlistQuote {
-  min-width: 132px;
-  text-align: right;
-}
-
-.watchlistQuote strong {
-  display: block;
-  color: #172033;
-  font-size: 16px;
-}
-
-.watchlistQuote span {
-  display: block;
-  margin-top: 3px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
+.watchlistQuote { min-width: 132px; text-align: right; }
+.watchlistQuote strong { display: block; color: #172033; font-size: 16px; }
+.watchlistQuote span { display: block; margin-top: 3px; font-size: 12px; font-weight: 700; }
 .marketMove.positive { color: #15803d; }
 .marketMove.negative { color: #b91c1c; }
 .marketMove.flat { color: #64748b; }
+.watchlistUpdated { display: block; margin-top: 2px; color: #94a3b8; font-size: 11px; font-weight: 400; }
 
-.watchlistUpdated {
-  display: block;
-  margin-top: 2px;
-  color: #94a3b8;
-  font-size: 11px;
-  font-weight: 400;
-}
-
-.activityToolbar {
-  margin-bottom: 16px;
-}
-
-.activitySearch {
-  flex: 1 1 360px;
-  min-width: 220px;
-}
+.activityToolbar { margin-bottom: 16px; }
+.activitySearch { flex: 1 1 360px; min-width: 220px; }
+.activityHeaderActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.activityExpandButton { min-height: 36px; }
 
 .activityEventClickable {
   cursor: pointer;
+  width: 100%;
 }
 
 .activityEventClickable > summary {
   display: flex;
   align-items: flex-start;
   gap: 12px;
+  width: 100%;
+  min-width: 0;
   list-style: none;
 }
 
-.activityEventClickable > summary::-webkit-details-marker {
-  display: none;
-}
-
-.activityEventClickable[open] {
-  background: #fbfdff;
-}
+.activityEventClickable > summary::-webkit-details-marker { display: none; }
+.activityEventClickable[open] { background: #fbfdff; }
+.activityEventBody { flex: 1 1 auto; min-width: 0; width: 100%; }
+.activityEventTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; min-width: 0; }
+.activityEventTitle { flex: 1 1 auto; min-width: 0; }
+.activityEventTitle strong { display: block; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+.activityEventTop time { flex: 0 0 auto; white-space: nowrap; }
+.activityMeta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 
 .activityEventDetails {
   margin: 11px 0 0 22px;
@@ -284,30 +253,16 @@ main,
   margin-bottom: 10px;
 }
 
-.activityEventDetailsGrid div {
-  min-width: 0;
-}
-
-.activityEventDetailsGrid span {
-  display: block;
-  color: #94a3b8;
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: .04em;
-}
-
-.activityEventDetailsGrid strong {
-  display: block;
-  margin-top: 2px;
-  color: #172033;
-  word-break: break-word;
-}
+.activityEventDetailsGrid div { min-width: 0; }
+.activityEventDetailsGrid span { display: block; color: #94a3b8; text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
+.activityEventDetailsGrid strong { display: block; margin-top: 2px; color: #172033; word-break: break-word; }
 
 .activityDetailsPre {
   margin: 10px 0 0;
   padding: 10px;
-  max-height: 280px;
+  max-height: 360px;
   overflow: auto;
+  overscroll-behavior: auto;
   white-space: pre-wrap;
   word-break: break-word;
   border-radius: 8px;
@@ -316,25 +271,15 @@ main,
   font-size: 12px;
 }
 
-.activityDeepLinks {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
-.activityLinkButton {
-  min-height: 34px;
-  padding: 0 10px;
-  color: #1d4ed8;
-}
+.activityDeepLinks { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.activityLinkButton { min-height: 34px; padding: 0 10px; color: #1d4ed8; }
 
 .tableScroll,
 .aiQuantTableWrap,
 .ordersTableWrap {
   width: 100%;
   overflow-x: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
 }
 
 @media (max-width: 1050px) {
@@ -342,24 +287,16 @@ main,
     grid-template-columns: minmax(0, 1fr) auto !important;
     gap: 10px;
   }
-
-  .watchlistQuote {
-    text-align: right;
-  }
-
+  .watchlistQuote { text-align: right; }
   .watchlistReason,
-  .watchlistTags {
-    grid-column: 1 / -1;
-  }
+  .watchlistTags { grid-column: 1 / -1; }
 }
 
 /* Base style.css intentionally collapses the two-column shell at tablet width.
    Keep navigation available as a horizontal, scrollable app bar instead of
    hiding the sidebar completely. */
 @media (max-width: 900px) {
-  .app {
-    display: block;
-  }
+  .app { display: block; }
 
   .sidebar {
     display: flex !important;
@@ -372,20 +309,16 @@ main,
     border-bottom: 1px solid #273244;
   }
 
-  .sidebar .brand {
-    padding: 2px 6px 8px;
-  }
-
+  .sidebar .brand { padding: 2px 6px 8px; }
   .sidebar .brand span,
-  .sidebarStatus {
-    display: none;
-  }
+  .sidebarStatus { display: none; }
 
   .sidebar nav {
     display: flex;
     flex-direction: row;
     gap: 6px;
     overflow-x: auto;
+    overscroll-behavior-x: auto;
     padding-bottom: 2px;
     scrollbar-width: thin;
   }
@@ -397,55 +330,24 @@ main,
     white-space: nowrap;
   }
 
-  main {
-    padding: 20px 18px 28px;
-  }
-
-  header {
-    align-items: flex-start;
-    gap: 12px;
-  }
+  main { padding: 20px 18px 28px; }
+  header { align-items: flex-start; gap: 12px; }
 }
 
 @media (max-width: 640px) {
   .watchlistSearchBar > button,
   .activityToolbar > button,
-  .activityToolbar select {
-    flex: 1 1 auto;
-  }
-
-  .watchlistResultRow {
-    grid-template-columns: 1fr;
-  }
-
-  .watchlistResultAction {
-    justify-self: start;
-  }
-
-  .watchlistQuote {
-    text-align: left;
-  }
-
-  .activityEventDetails {
-    margin-left: 0;
-  }
-
-  main {
-    padding: 16px 12px 24px;
-  }
-
-  header {
-    flex-direction: column;
-    margin-bottom: 18px;
-  }
-
-  header h1 {
-    font-size: 24px;
-  }
-
+  .activityToolbar select { flex: 1 1 auto; }
+  .watchlistResultRow { grid-template-columns: 1fr; }
+  .watchlistResultAction { justify-self: start; }
+  .watchlistQuote { text-align: left; }
+  .activityEventTop { flex-direction: column; gap: 5px; }
+  .activityEventDetails { margin-left: 0; }
+  .activityHeaderActions { justify-content: flex-start; }
+  main { padding: 16px 12px 24px; }
+  header { flex-direction: column; margin-bottom: 18px; }
+  header h1 { font-size: 24px; }
   .statusGrid,
   .metricGrid,
-  .lowerGrid {
-    grid-template-columns: 1fr;
-  }
+  .lowerGrid { grid-template-columns: 1fr; }
 }
