@@ -5,7 +5,9 @@ from app.services.opend import opend
 from app.services.settings import settings
 from app.services.trading import trading
 from app.services.ai_execution import ai_execution
+from app.services.ai_run_context import ai_run_context
 from app.services.live_ai_adapter import install_live_ai_execution
+from app.services.live_context_adapter import install_live_context
 from app.api.market import router as market_router
 from app.api.portfolio import router as portfolio_router
 from app.api.orders import router as orders_router
@@ -24,6 +26,7 @@ from app.api.settings import router as settings_router
 
 NAME = config["cerebro"]["name"]
 install_live_ai_execution(ai_execution)
+install_live_context(ai_run_context)
 
 
 app = FastAPI(
