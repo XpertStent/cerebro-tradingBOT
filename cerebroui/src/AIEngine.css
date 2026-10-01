@@ -72,7 +72,7 @@
 .aiMessage { border-radius: 10px; padding: 11px 13px; border: 1px solid #bfdbfe; background: #eff6ff; color: #334155; }
 .aiMessage.error { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
 .aiEmpty { color: #94a3b8; padding: 18px 0; text-align: center; }
-.aiQuantTableWrap { overflow: auto; min-width: 720px; }
+.aiQuantTableWrap { overflow: auto; overscroll-behavior: auto; min-width: 720px; }
 .aiQuantTable { width: 100%; border-collapse: collapse; font-size: 12px; }
 .aiQuantTable th { position: sticky; top: 0; z-index: 2; text-align: left; color: #94a3b8; font-size: 10px; text-transform: uppercase; border-bottom: 1px solid #e8edf3; padding: 9px 8px; background: #fff; }
 .aiQuantTable td { border-bottom: 1px solid #f0f2f5; padding: 9px 8px; color: #475569; }
@@ -89,10 +89,20 @@
 .researchSymbolGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
 .researchSymbol { border: 1px solid #e5e7eb; border-radius: 9px; background: #fff; padding: 9px 10px; display: grid; grid-template-columns: 18px 1fr auto; gap: 7px; align-items: center; text-align: left; cursor: pointer; }
 .researchSymbol:hover { background: #f8fafc; }
+.researchSymbol.selected { border-color: #93c5fd; background: #eff6ff; box-shadow: inset 0 0 0 1px #bfdbfe; }
 .researchSymbol strong { color: #253047; font-size: 12px; }
 .researchSymbol span { font-size: 10px; font-weight: 800; }
 .researchSymbol span.good { color: #15803d; }
 .researchSymbol span.bad { color: #b91c1c; }
+.researchSymbol span.retry { color: #b45309; }
+.researchInspector { margin-top: 12px; border: 1px solid #bfdbfe; border-radius: 11px; background: #f8fbff; overflow: hidden; }
+.researchInspector.error { border-color: #fecaca; background: #fffafa; }
+.researchInspectorHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 12px; border-bottom: 1px solid #dbeafe; }
+.researchInspectorHead div { min-width: 0; }
+.researchInspectorHead strong, .researchInspectorHead span { display: block; }
+.researchInspectorHead strong { color: #172033; }
+.researchInspectorHead span { margin-top: 2px; color: #64748b; font-size: 11px; }
+.researchInspector pre { margin: 0; padding: 12px; max-height: 420px; overflow: auto; overscroll-behavior: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #0f172a; color: #e2e8f0; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .researchErrorList { display: grid; gap: 8px; }
 .researchErrorCard { border: 1px solid #fecaca; border-radius: 10px; background: #fffafa; overflow: hidden; }
 .researchErrorCard summary { list-style: none; cursor: pointer; padding: 11px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -103,9 +113,9 @@
 .researchErrorCard summary div span { color: #64748b; font-size: 11px; margin-top: 2px; }
 .researchErrorCard summary > span { color: #b91c1c; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .researchErrorBody { border-top: 1px solid #fecaca; padding: 11px 12px; }
-.researchErrorBody pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 10px; color: #7f1d1d; font: inherit; font-size: 12px; line-height: 1.45; }
+.researchErrorBody pre { max-height: 420px; overflow: auto; overscroll-behavior: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; color: #7f1d1d; font: inherit; font-size: 12px; line-height: 1.45; }
 .cancelOrderButton { padding: 6px 9px; background: #fff; color: #b91c1c; border-color: #fecaca; font-size: 12px; }
 .orderNoAction { color: #cbd5e1; }
 @media (max-width: 1100px) { .aiProgressMeta { grid-template-columns: repeat(3,minmax(0,1fr)); } }
 @media (max-width: 950px) { .aiHero { flex-direction: column; align-items: flex-start; } .aiHeroActions { justify-content: flex-start; } .aiProgressMeta, .aiSummaryGrid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
-@media (max-width: 650px) { .aiProgressMeta, .aiSummaryGrid, .aiDetailGrid { grid-template-columns: 1fr; } .aiDecisionTop { align-items: flex-start; flex-wrap: wrap; } .aiConfidence { margin-left: 0; } .aiPerDecisionActions { justify-content: stretch; } .aiPerDecisionActions button { width: 100%; justify-content: center; } .researchErrorCard summary { align-items: flex-start; } }
+@media (max-width: 650px) { .aiProgressMeta, .aiSummaryGrid, .aiDetailGrid { grid-template-columns: 1fr; } .aiDecisionTop { align-items: flex-start; flex-wrap: wrap; } .aiConfidence { margin-left: 0; } .aiPerDecisionActions { justify-content: stretch; } .aiPerDecisionActions button { width: 100%; justify-content: center; } .researchErrorCard summary, .researchInspectorHead { align-items: flex-start; flex-direction: column; } }
