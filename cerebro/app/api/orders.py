@@ -156,13 +156,14 @@ def build_preview(order: OrderRequest):
         portfolio_available_cash=float(
             account.get("available_cash")
             if account.get("available_cash") is not None
-            else account.get("cash") or 0
+            else (0 if trading.mode() == "live" else account.get("cash") or 0)
         ),
         portfolio_market_value=float(account.get("market_value") or 0),
         current_position_value=float((position or {}).get("market_value") or 0),
         current_position_qty=float((position or {}).get("quantity") or 0),
         available_position_qty=float((position or {}).get("available_quantity") or 0),
         realized_pnl=account.get("realized_pnl"),
+            daily_equity_pnl=account.get("daily_pnl"),
     )
 
     mode = trading.mode().upper()

@@ -124,7 +124,7 @@ LIVE/PAPER risk evaluation checks:
 - minimum cash reserve percentage,
 - maximum order / median turnover where research data is available,
 - long-only SELL quantity against available shares,
-- broker-reported realized-P&L loss guard when that value is available,
+- LIVE account-equity-change loss guard since the first observation of the US day (not realized P&L),
 - duplicate pending-order prevention in the AI path,
 - maximum new positions per AI run.
 
@@ -357,3 +357,17 @@ Any pending LIVE AI proposal remains tied to the LIVE account that generated it 
 ## Development note
 
 Do not merge this LIVE implementation to `main` until it has been validated against the intended OpenD/Moomoo account setup. The stable branch remains the known-good PAPER checkpoint by design.
+
+## USD funds and P&L reconciliation
+
+LIVE funds are queried with `Currency.USD`. `usd_assets` is the USD net-assets value, `us_cash` is USD cash and `usd_net_cash_power` is USD cash buying power. Available funds are `max(0, min(us_cash, usd_net_cash_power))`; unavailable cash-power data blocks new BUY orders. `power` can include margin and is not spendable cash. Account-level `available_funds`, `unrealized_pl` and `realized_pl` are futures fields and are excluded from securities accounting. Field-source metadata is returned with account context.
+
+Portfolio Position P&L sums valid USD `position.pl_val` values, matching the application's position P&L total. Average-cost unrealized P&L comes separately from `position.unrealized_pl`. Current-position data cannot establish total realized P&L after positions close, so that total remains unavailable. The daily loss guard uses account equity change since the first observation of the US trading day and includes deposits/withdrawals; it is not the app's Today's P&L or realized P&L.
+
+Quant outputs preserve factor ranking and add dated account funds and per-candidate whole-share affordability/risk annotations. AI context includes current funds, P&L semantics and sources. Proposal generation reserves available funds across BUY proposals; pending SELL proceeds do not increase verified funds. Fresh manual/AI execution revalidates against the active account and broker cash-only maximum quantity. Regenerate existing quant/AI runs after deployment.
+
+Screenshot regression fixture: USD net assets 1806.27, US position market values 332.50 + 1072.00 + 151.20 + 172.50 = 1728.20, cash difference 78.07; position P&L -1.90 + 139.90 -3.18 + 0.90 = 135.72. The subsequent Assets screenshot confirms USD cash, withdrawable cash and buying power are all 78.07; it shows 1805.22 assets, 1727.15 market value, 134.67 position P&L and 7.20 Today’s P&L at its later timestamp. Prices differ between screenshots taken at different times.
+
+## Chart history correctness
+
+Candle requests use an explicit recent range sized to the interval and requested count, consume all history pages, deduplicate/sort by broker timestamp and select the latest N only after pagination. Partial pagination failures raise an error instead of displaying old bars. US intraday timestamps are converted from New York time with DST, and the chart labels that timezone. Responses from superseded security/interval requests cannot overwrite the selected chart. Regular-session/unadjusted bars intentionally differ from the app's 24-hour quote.

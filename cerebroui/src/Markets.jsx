@@ -56,7 +56,7 @@ function formatPrice(value) {
 }
 
 
-function chartTime(value, timeframe) {
+function chartTime(value, timeframe, timestamp) {
 
   if (!value)
     return null;
@@ -67,6 +67,8 @@ function chartTime(value, timeframe) {
   ) {
     return value.slice(0, 10);
   }
+
+  if (Number.isFinite(timestamp)) return timestamp;
 
   const [
     datePart,
@@ -202,11 +204,14 @@ export default function Markets() {
   }
 
 
+  const chartRequestId = useRef(0);
+
   async function loadSymbol(target) {
 
     if (!target)
       return;
 
+    const requestId = ++chartRequestId.current;
     setLoading(true);
     setError(null);
 
@@ -240,18 +245,20 @@ export default function Markets() {
       const c =
         await candleResponse.json();
 
+      if (requestId !== chartRequestId.current) return;
+      if (c.symbol !== target || c.timeframe !== timeframe) throw new Error("Chart response does not match the selected security and interval");
       setQuote(q);
       setCandles(c.candles || []);
 
     } catch (e) {
-
+      if (requestId !== chartRequestId.current) return;
       setQuote(null);
       setCandles([]);
       setError(e.message);
 
     } finally {
 
-      setLoading(false);
+      if (requestId === chartRequestId.current) setLoading(false);
     }
   }
 
@@ -280,6 +287,7 @@ export default function Markets() {
 
 
   function chooseSuggestion(item) {
+    ++chartRequestId.current;
 
     setSearch(
       `${item.ticker} — ${item.name}`
@@ -296,6 +304,7 @@ export default function Markets() {
 
 
   function clearSecurity() {
+    ++chartRequestId.current;
 
     setSearch("");
     setSymbol(null);
@@ -716,6 +725,7 @@ export default function Markets() {
 
 
           <section className="chartPanel">
+            <p>Regular-session candles · New York time (US) · Unadjusted prices. Interval buttons select candle duration, not date range.</p>
 
             <div className="chartToolbar">
 
@@ -975,6 +985,11 @@ function PriceChart({
           textColor: "#64748b"
         },
 
+        localization: {
+          timeFormatter: time => typeof time === "number"
+            ? new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
+            : `${time.year}-${time.month}-${time.day}`
+        },
         grid: {
           vertLines: {
             color: "#f1f5f9"
@@ -991,6 +1006,9 @@ function PriceChart({
 
         timeScale: {
           borderColor: "#e2e8f0",
+          tickMarkFormatter: time => typeof time === "number"
+            ? new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
+            : `${time.year}-${time.month}-${time.day}`,
           timeVisible:
             !["1d", "1w"].includes(
               timeframe
@@ -1004,7 +1022,8 @@ function PriceChart({
       candles.map(c => ({
         time: chartTime(
           c.time,
-          timeframe
+          timeframe,
+          c.timestamp
         ),
         open: Number(c.open),
         high: Number(c.high),
@@ -1039,7 +1058,8 @@ function PriceChart({
         candles.map(c => ({
           time: chartTime(
             c.time,
-            timeframe
+            timeframe,
+            c.timestamp
           ),
           value: Number(
             c.close
@@ -1080,7 +1100,8 @@ function PriceChart({
 
           time: chartTime(
             c.time,
-            timeframe
+            timeframe,
+            c.timestamp
           ),
 
           value: Number(

@@ -20,6 +20,7 @@ class RiskEngine:
         available_position_qty: float | None = None,
         median_turnover_60d: float | None = None,
         realized_pnl: float | None = None,
+        daily_equity_pnl: float | None = None,
     ):
         enabled = settings.get_bool("risk.enabled")
         configured_max_order_value = float(settings.get("risk.max_order_value"))
@@ -78,7 +79,7 @@ class RiskEngine:
 
         total = float(portfolio_total or 0)
         cash = float(portfolio_cash or 0)
-        available_cash = float(portfolio_available_cash if portfolio_available_cash is not None else cash)
+        available_cash = max(0.0, min(cash, float(portfolio_available_cash))) if portfolio_available_cash is not None else (0.0 if mode == "LIVE" else max(0.0, cash))
         market_value = float(portfolio_market_value or 0)
         current_value = float(current_position_value or 0)
         has_sell_quantity_context = current_position_qty is not None or available_position_qty is not None
@@ -148,19 +149,21 @@ class RiskEngine:
                 ),
             })
 
-        if realized_pnl is not None and max_daily_loss > 0:
+        loss_pnl = daily_equity_pnl if mode == "LIVE" else realized_pnl
+        loss_label = "Account equity change since first observation today" if mode == "LIVE" else "Broker realized P&L"
+        if loss_pnl is not None and max_daily_loss > 0:
             try:
-                realized = float(realized_pnl)
+                realized = float(loss_pnl)
             except (TypeError, ValueError):
                 realized = 0.0
             loss_ok = realized > -max_daily_loss
             checks.append({
-                "name": "realized_loss_guard",
+                "name": "daily_equity_loss_guard" if mode == "LIVE" else "realized_loss_guard",
                 "passed": loss_ok,
                 "message": (
-                    f"Broker realized P&L ${realized:,.2f} is above the -${max_daily_loss:,.2f} loss guard"
+                    f"{loss_label} ${realized:,.2f} is above the -${max_daily_loss:,.2f} loss guard"
                     if loss_ok
-                    else f"Broker realized P&L ${realized:,.2f} breaches the -${max_daily_loss:,.2f} loss guard"
+                    else f"{loss_label} ${realized:,.2f} breaches the -${max_daily_loss:,.2f} loss guard"
                 ),
             })
 
@@ -191,6 +194,7 @@ class RiskEngine:
             "estimated_price": estimated_price,
             "estimated_value": estimated_value,
             "projected": {
+                "available_cash_before": available_cash,
                 "cash": (cash - estimated_value if side == "BUY" else cash + estimated_value) if total > 0 else None,
                 "position_value": current_value + estimated_value if side == "BUY" else max(0.0, current_value - estimated_value),
             },

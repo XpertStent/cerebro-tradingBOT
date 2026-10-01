@@ -23,6 +23,9 @@ jobs:
       - name: Compile Cerebro Python
         run: python -m compileall -q cerebro/app
 
+      - name: Check account funds and candle regressions
+        run: python -m unittest discover -s cerebro/tests -v
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:

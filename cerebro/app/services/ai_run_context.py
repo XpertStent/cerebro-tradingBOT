@@ -15,7 +15,8 @@ class AIRunContextBuilder:
         keys = [
             "symbol", "name", "quantity", "qty", "available_qty",
             "average_cost", "avg_cost", "current_price", "market_value",
-            "unrealized_pnl", "unrealized_pnl_pct",
+            "unrealized_pnl", "unrealized_pnl_pct", "profit_loss", "profit_loss_percent",
+            "available_quantity", "today_pnl", "currency",
         ]
         return {key: item.get(key) for key in keys if item.get(key) is not None}
 
@@ -116,7 +117,7 @@ class AIRunContextBuilder:
         rejection_limit = int(settings.get("ai.context.recent_rejections_per_symbol"))
         include_watchlist = settings.get_bool("ai.context.include_watchlist")
 
-        account = trading.get_account_summary()
+        account = trading.get_account_summary(refresh=True)
         positions_raw = trading.get_positions()
         orders_raw = trading.get_orders()
 
@@ -295,6 +296,7 @@ class AIRunContextBuilder:
                 "quant": quant_context,
                 "research_context": research_by_symbol.get(symbol),
                 "event_review": event_review,
+                "account_sizing_snapshot": (quant_item or {}).get("account_sizing"),
                 "watchlist": watch_by_symbol.get(symbol) or memory.get("watchlist"),
                 "active_thesis": memory.get("active_thesis"),
                 "recent_decisions": memory.get("recent_decisions"),
@@ -330,6 +332,8 @@ class AIRunContextBuilder:
                 "pending_orders": pending_orders,
             },
             "quant_context": {
+                "account_context_at_scan": (latest_quant_data.get("result") or latest_quant_data).get("account_context"),
+                "account_sizing_note": "Scan annotations are historical. Use the current portfolio account available_cash for decisions; execution revalidates funds.",
                 "run_id": latest_quant_data.get("run_id"),
                 "generated_at": latest_quant_data.get("generated_at"),
                 "candidate_count": len(quant_candidates),

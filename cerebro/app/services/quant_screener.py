@@ -2,6 +2,9 @@ from statistics import mean
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from app.services.account_fields import account_context, number
+from app.services.trading import trading
+from app.services.risk import risk
 from app.services.market_metrics import market_metrics
 from app.services.market_series import market_series
 from app.services.universe import universe_service
@@ -385,8 +388,42 @@ class QuantScreener:
             item["quant"]["pool_percentile"] = round(percentile, 2)
 
         final = analysed[:final_limit]
+        # Account annotations never alter factor ranks or remove held/watch names.
+        # They are a dated sizing snapshot, not execution approval.
+        funding = {"status": "UNAVAILABLE"}
+        try:
+            account = trading.get_account_summary(refresh=True)
+            funding = {"status": "CAPTURED", **account_context(account),
+                       "captured_at": datetime.now(ZoneInfo("UTC")).isoformat()}
+            positions = {p["symbol"]: p for p in trading.get_positions()}
+            for item in final:
+                symbol = item["symbol"]
+                price = number((snapshot_map.get(symbol) or {}).get("price"))
+                position = positions.get(symbol) or {}
+                available = number(account.get("available_cash"))
+                annotation = {"currency": "USD", "reference_price": price,
+                              "available_cash": available,
+                              "cash_affordable_shares": int(max(0, available) // price) if available is not None and price and price > 0 else None,
+                              "execution_context_id": account.get("execution_context_id"),
+                              "captured_at": funding["captured_at"]}
+                if price and price > 0:
+                    preview = risk.evaluate_order(
+                        trading_enabled=settings.get_bool("trading.enabled"), mode=trading.mode(),
+                        symbol=symbol, side="BUY", quantity=1, estimated_price=price,
+                        portfolio_total=account.get("total_value"), portfolio_cash=account.get("cash"),
+                        portfolio_available_cash=available, portfolio_market_value=account.get("market_value"),
+                        current_position_value=position.get("market_value"), daily_equity_pnl=account.get("daily_pnl"),
+                        median_turnover_60d=(item.get("metrics") or {}).get("median_turnover_60d"))
+                    annotation["one_share_risk_approved"] = preview["approved"]
+                    annotation["risk_checks"] = preview["risk_checks"]
+                item["account_sizing"] = annotation
+        except Exception as exc:
+            funding = {"status": "UNAVAILABLE", "error": str(exc)}
+            for item in final:
+                item.pop("account_sizing", None)
 
         return {
+            "account_context": funding,
             "market": "US",
             "method": "LOCAL_SNAPSHOT_MULTI_FACTOR_V3",
             "screens": discovery["screens"],

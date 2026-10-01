@@ -135,6 +135,8 @@ class AIExecutionService:
 
         max_new_positions = int(settings.get("risk.max_new_positions_per_run"))
         new_positions_used = 0
+        available = account.get("available_cash")
+        projected_available_cash = float(available) if available is not None else (0.0 if trading.mode() == "live" else starting_cash)
         projected_cash = starting_cash
         projected_market_value = starting_market_value
         proposals = []
@@ -306,6 +308,8 @@ class AIExecutionService:
                 estimated_price=price,
                 portfolio_total=total_value,
                 portfolio_cash=projected_cash,
+                portfolio_available_cash=projected_available_cash,
+                daily_equity_pnl=account.get("daily_pnl"),
                 portfolio_market_value=projected_market_value,
                 current_position_value=current_value,
                 median_turnover_60d=median_turnover,
@@ -333,6 +337,7 @@ class AIExecutionService:
                 reserved_value = float(risk_result.get("estimated_value") or 0)
                 if side == "BUY":
                     projected_cash -= reserved_value
+                    projected_available_cash = max(0.0, projected_available_cash - reserved_value)
                     projected_market_value += reserved_value
                 else:
                     projected_cash += reserved_value
@@ -351,6 +356,7 @@ class AIExecutionService:
             ),
             "projected_portfolio": {
                 "cash": round(projected_cash, 2),
+                "available_cash": round(projected_available_cash, 2),
                 "market_value": round(projected_market_value, 2),
             },
         }
@@ -409,6 +415,8 @@ class AIExecutionService:
             estimated_price=price,
             portfolio_total=total_value,
             portfolio_cash=float(account.get("cash") or 0),
+            portfolio_available_cash=account.get("available_cash"),
+            daily_equity_pnl=account.get("daily_pnl"),
             portfolio_market_value=float(account.get("market_value") or 0),
             current_position_value=current_value,
             median_turnover_60d=proposal.get("median_turnover_60d"),

@@ -10,6 +10,8 @@ from moomoo import (
 from app.config import config
 
 import math
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 
 class OpenDClient:
@@ -271,32 +273,47 @@ class OpenDClient:
                 "max_count": 1000,
             }
 
-            if start is not None:
-                kwargs["start"] = start
+            market_timezone = "America/New_York" if symbol.startswith("US.") else "Asia/Hong_Kong"
+            now = datetime.now(ZoneInfo(market_timezone))
+            minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
+            if timeframe in minutes:
+                lookback_days = max(7, math.ceil(count * minutes[timeframe] / 390 * 2) + 7)
+            else:
+                lookback_days = count * (14 if timeframe == "1w" else 2) + 14
+            kwargs["end"] = end or now.strftime("%Y-%m-%d")
+            end_date = datetime.strptime(kwargs["end"][:10], "%Y-%m-%d")
+            kwargs["start"] = start or (end_date - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
 
-            if end is not None:
-                kwargs["end"] = end
-
-            ret, data, page_req_key = (
-                ctx.request_history_kline(
-                    **kwargs
-                )
-            )
-
-            if ret != RET_OK:
-                raise RuntimeError(str(data))
-
-            # Moomoo may return the oldest rows first.
-            # Always return the latest N candles.
-            data = data.sort_values(
-                by="time_key"
-            ).tail(count)
+            # History pages are oldest-first; exhaust the range before selecting
+            # the latest N. Returning only the first page silently shows old prices.
+            rows = {}
+            page_key = None
+            seen_keys = set()
+            for _ in range(100):
+                ret, data, next_key = ctx.request_history_kline(**kwargs, page_req_key=page_key)
+                if ret != RET_OK:
+                    raise RuntimeError(str(data))
+                for _, row in data.iterrows():
+                    if row.get("code") is not None and str(row.get("code")) != symbol:
+                        raise RuntimeError("Broker candle symbol does not match request")
+                    rows[str(row.get("time_key"))] = row
+                if not next_key:
+                    break
+                marker = repr(next_key)
+                if marker in seen_keys:
+                    raise RuntimeError("Broker repeated a candle pagination key")
+                seen_keys.add(marker)
+                page_key = next_key
+            else:
+                raise RuntimeError("Candle history pagination exceeded the safety limit")
 
             candles = []
 
-            for _, row in data.iterrows():
-
+            for time_key in sorted(rows)[-count:]:
+                row = rows[time_key]
+                candle_time = datetime.fromisoformat(time_key).replace(tzinfo=ZoneInfo(market_timezone))
                 candles.append({
+                    "timestamp": int(candle_time.timestamp()),
                     "time": self._clean(row.get("time_key")),
                     "open": self._clean(row.get("open")),
                     "high": self._clean(row.get("high")),
@@ -310,6 +327,12 @@ class OpenDClient:
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "count": len(candles),
+                "timezone": market_timezone,
+                "adjustment": adjustment_key,
+                "session": "REGULAR",
+                "start": kwargs["start"],
+                "end": kwargs["end"],
+                "latest_candle_time": candles[-1]["time"] if candles else None,
                 "candles": candles
             }
 

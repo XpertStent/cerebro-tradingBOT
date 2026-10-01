@@ -1,5 +1,6 @@
 from types import MethodType
 
+from app.services.account_fields import account_context
 from app.services.execution_context import build_execution_context
 from app.services.trading import trading
 
@@ -21,7 +22,7 @@ def install_live_context(ai_run_context):
         policy["sizing_note"] = (
             "desired_exposure_pct is applied to the currently selected account's real total value, "
             "converted to whole shares, then constrained by current-account cash, position, invested-capital, "
-            "liquidity and deterministic risk limits before broker submission."
+            "liquidity and deterministic risk limits before broker submission. Available funds are cash-only USD capacity; do not treat market value or margin power as spendable. Sales do not replenish verified available funds until broker confirmation. daily_pnl is equity change since first observation, not realized profit."
         )
         return policy
 
@@ -37,6 +38,7 @@ def install_live_context(ai_run_context):
 
         portfolio_account = context.setdefault("portfolio", {}).setdefault("account", {})
         portfolio_account.update({
+            **account_context(account),
             "mode": account.get("mode"),
             "account_id_masked": execution_context.get("account_id_masked"),
             "security_firm": execution_context.get("security_firm"),

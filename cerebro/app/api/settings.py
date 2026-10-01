@@ -79,7 +79,7 @@ def _public_snapshot():
 
         if key == "risk.max_daily_loss":
             item["description"] = (
-                "Loss guard applied against broker-reported realized P&L when available. New execution is blocked once the configured loss threshold is breached."
+                "LIVE guard uses USD account equity change since the first observation of the US trading day, including market moves and cash transfers. This is not realized P&L."
             )
 
         if key == "ai.decision.model":

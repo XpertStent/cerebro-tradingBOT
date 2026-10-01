@@ -65,6 +65,8 @@ export default function Portfolio() {
   const positions = portfolio?.positions || [];
   const unrealized = account?.unrealized_pnl;
   const realized = account?.realized_pnl;
+  const positionPnl = account?.position_pnl;
+  const equityChange = account?.daily_pnl;
   const mode = String(account?.mode || "PAPER").toUpperCase();
   const live = mode === "LIVE";
 
@@ -88,7 +90,7 @@ export default function Portfolio() {
           <div className="previewAccountGrid">
             <div className="previewAccountCard"><span>Account</span><strong>{account.account_id_masked || `••••${String(account.account_id || "").slice(-4)}`}</strong></div>
             <div className="previewAccountCard"><span>Broker</span><strong>{account.security_firm || "—"}</strong></div>
-            <div className="previewAccountCard"><span>Available funds</span><strong>{money(account.available_cash)}</strong></div>
+            <div className="previewAccountCard"><span>Available funds (USD, cash-only)</span><strong>{money(account.available_cash)}</strong></div>
           </div>
         )}
 
@@ -101,14 +103,24 @@ export default function Portfolio() {
 
         <section className="pnlGrid">
           <div className="pnlCard">
-            <span>Unrealized P&L</span>
+            <span>Position P&L</span>
+            <strong className={positionPnl > 0 ? "positive" : positionPnl < 0 ? "negative" : ""}>{money(positionPnl)}</strong>
+          </div>
+          <div className="pnlCard">
+            <span>Unrealized P&L (average cost)</span>
             <strong className={unrealized > 0 ? "positive" : unrealized < 0 ? "negative" : ""}>{money(unrealized)}</strong>
           </div>
           <div className="pnlCard">
             <span>Realized P&L</span>
             <strong className={realized > 0 ? "positive" : realized < 0 ? "negative" : ""}>{money(realized)}</strong>
           </div>
+          <div className="pnlCard">
+            <span>Equity change since first observation today</span>
+            <strong className={equityChange > 0 ? "positive" : equityChange < 0 ? "negative" : ""}>{money(equityChange)}</strong>
+          </div>
         </section>
+        {live && <p>Position P&L is the total reported for current US holdings. Realized P&L is unavailable without verified closed-trade history. Equity change includes market moves and cash transfers.</p>}
+        {live && account && <p>USD cash buying power: {money(account.cash_buying_power)}. Available funds use the lower of USD cash and cash buying power; margin is excluded. {!account.funds_verified && "Funds could not be verified; new BUY orders are blocked."}</p>}
       </CollapsibleSection>
 
       <CollapsibleSection

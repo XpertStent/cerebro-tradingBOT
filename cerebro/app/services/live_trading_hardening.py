@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from moomoo import Currency, ModifyOrderOp, OrderType, RET_OK, TrdEnv, TrdMarket, TrdSide
 
+from app.services.account_fields import securities_funds, position_pnl
 from app.services.activity import activity
 from app.services.execution_context import build_execution_context
 
@@ -199,16 +200,13 @@ def install_hardened_trading(trading):
                 raise RuntimeError("No LIVE account information returned")
             row = data.iloc[0]
 
-            total_value = hardening._f(row.get("usd_assets"))
+            funds = securities_funds(row)
+            total_value = funds["total_value"]
             if total_value is None:
-                total_value = hardening._f(row.get("total_assets"), 0.0)
-            cash = hardening._f(row.get("us_cash"))
-            if cash is None:
-                cash = hardening._f(row.get("cash"), 0.0)
-            buying_power = hardening._f(row.get("usd_net_cash_power"))
-            if buying_power is None:
-                buying_power = cash
-            market_value = hardening._f(row.get("market_val"), 0.0)
+                raise RuntimeError("LIVE USD account value is unavailable")
+            positions = self.get_positions(refresh=refresh)
+            us_positions = [p for p in positions if str(p.get("symbol", "")).startswith("US.")]
+            pnl = position_pnl(us_positions)
 
             execution_context = build_execution_context(mode="LIVE", account=account)
             daily = hardening.daily_equity_pnl(
@@ -222,13 +220,8 @@ def install_hardened_trading(trading):
                 "currency": "USD",
                 "security_firm": firm,
                 "account_type": account.get("account_type"),
-                "total_value": total_value,
-                "cash": cash,
-                "market_value": market_value,
-                "available_cash": buying_power,
-                "buying_power": buying_power,
-                "unrealized_pnl": None,
-                "realized_pnl": daily["daily_pnl"],
+                **funds,
+                **pnl,
                 "daily_pnl": daily["daily_pnl"],
                 "daily_pnl_method": daily["method"],
                 "daily_pnl_baseline": daily["baseline_assets"],

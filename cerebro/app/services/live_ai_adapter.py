@@ -166,7 +166,7 @@ def install_live_ai_execution(ai_execution):
             portfolio_available_cash=float(
                 account_summary.get("available_cash")
                 if account_summary.get("available_cash") is not None
-                else account_summary.get("cash") or 0
+                else (0 if trading.mode() == "live" else account_summary.get("cash") or 0)
             ),
             portfolio_market_value=float(account_summary.get("market_value") or 0),
             current_position_value=float((position or {}).get("market_value") or 0),
@@ -174,6 +174,7 @@ def install_live_ai_execution(ai_execution):
             available_position_qty=float((position or {}).get("available_quantity") or 0),
             median_turnover_60d=proposal.get("median_turnover_60d"),
             realized_pnl=account_summary.get("realized_pnl"),
+            daily_equity_pnl=account_summary.get("daily_pnl"),
         )
 
         mode = trading.mode().upper()

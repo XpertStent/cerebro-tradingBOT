@@ -14,6 +14,7 @@ from moomoo import (
     TrdSide,
 )
 
+from app.services.account_fields import number
 from app.services.activity import activity
 from app.services.settings import settings
 
@@ -427,7 +428,11 @@ class TradingClient:
                         "average_cost": self._clean(row.get("cost_price")),
                         "current_price": self._clean(row.get("nominal_price")),
                         "market_value": self._clean(row.get("market_val")),
-                        "profit_loss": self._clean(row.get("pl_val")),
+                        "profit_loss": number(row.get("pl_val")) if row.get("pl_val_valid") is not False and str(row.get("pl_val_valid")).lower() != "false" else None,
+                        "unrealized_pnl": number(row.get("unrealized_pl")) if mode == "live" else None,
+                        "realized_pnl": number(row.get("realized_pl")) if mode == "live" else None,
+                        "today_pnl": number(row.get("today_pl_val")),
+                        "currency": self._enum_text(row.get("currency")),
                         "profit_loss_percent": self._clean(row.get("pl_ratio")),
                         "mode": mode.upper(),
                     }
