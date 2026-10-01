@@ -24,8 +24,8 @@ Persistent state lives in Docker volumes. `cerebro-data` contains SQLite state, 
 3. Perform historical analysis and multi-factor ranking.
 4. Persist the fresh quant result.
 5. Build decision context from current PAPER account state, held positions, pending orders, watchlist, quant candidates, fresh market snapshots, AI memory and current deterministic risk settings.
-6. Research holdings/candidates using the configured **Research / News Model**.
-7. Run one structured **Decision-Making Model** request across the completed portfolio context.
+6. Research holdings/candidates using the configured **Research / News Model** in clustered web-research requests.
+7. Run one structured **Decision-Making Model** request across the complete portfolio context. By default, the final decision model also has its own live web-search tool so it can independently verify or augment the upstream research before deciding.
 8. Validate the returned decisions and persist decision/thesis memory.
 9. Convert actionable decisions into deterministic whole-share proposals.
 10. Apply deterministic portfolio/risk controls.
@@ -48,7 +48,7 @@ The decision model can return:
 
 Held symbols are constrained to `ADD / HOLD / REDUCE / SELL`. Non-held symbols are constrained to `BUY / WATCH / IGNORE`.
 
-The prompt explicitly allows independent investment analysis using quant signals, market snapshots, research/news, portfolio state, memory and risk policy. Missing research is not treated as an automatic WATCH instruction.
+The prompt explicitly allows independent investment analysis using quant signals, market snapshots, clustered research/news, portfolio state, memory, deterministic risk policy and, when enabled, the decision model's own live web verification. Missing upstream research is not treated as an automatic WATCH instruction.
 
 ## Clustered research/news and rate limits
 
@@ -56,9 +56,20 @@ Research/news is batched dynamically instead of sending one OpenAI request per s
 
 Example: 30 research symbols with 4 clusters are split approximately `8 + 8 + 7 + 7`. Cached research is removed before clustering, so repeat runs may require fewer API calls.
 
-Transient OpenAI failures are retried up to the configured retry limit. For a provider response such as `Please try again in 425ms`, Cerebro waits the provider-specified delay **plus a 1-second safety buffer** before retrying. `Retry-After` headers are preferred when present. If no provider delay is available, Cerebro falls back to exponential backoff with jitter for rate-limit, timeout, connection and retryable 5xx failures.
+Transient OpenAI failures are retried. For a provider response such as `Please try again in 425ms`, Cerebro waits the provider-specified delay **plus a 1-second safety buffer** before retrying. `Retry-After` headers are preferred when present. If no provider delay is available, Cerebro falls back to exponential backoff with jitter for rate-limit, timeout, connection and retryable 5xx failures.
 
-The Strategies UI exposes research completion, cluster count, in-flight work, per-symbol errors and retry state. Error rows are expandable so the exact failed symbols/API messages can be inspected.
+The final decision request uses the same retry mechanism, so a TPM/RPM burst during portfolio analysis does not immediately fail the entire run.
+
+### Decision-model web verification
+
+The final decision model has separate runtime settings under **AI & Models → Decision Model**:
+
+- **Decision Model Web Research** — default ON
+- **Decision Web Search Context Size** — low / medium / high
+
+This is intentionally separate from the clustered research stage. The upstream research model gathers structured company/news evidence, while the final decision model may independently verify recent material facts, investigate failed research gaps, or resolve conflicting evidence before returning the final portfolio decisions.
+
+The Strategies page reports whether final decision web verification is active and, after completion, how many decision-model web-search calls / unique observed sources were used.
 
 ## Decision and approval behaviour
 
@@ -75,18 +86,7 @@ When auto-execution is ON, approval controls are omitted for that run because ri
 
 ## Deterministic risk context
 
-The model is informed about the current execution policy so it can propose realistic allocations, including:
-
-- trading/risk enabled state
-- PAPER-only mode
-- maximum order value
-- maximum position percentage
-- maximum invested percentage
-- minimum cash reserve
-- maximum new positions per run
-- maximum order/liquidity percentage when turnover data is available
-- default order type
-- auto-execution state
+The model is informed about the current execution policy so it can propose realistic allocations, including trading/risk state, PAPER-only mode, maximum order value, maximum position percentage, maximum invested percentage, minimum cash reserve, maximum new positions per run, liquidity limits, default order type and auto-execution state.
 
 These values are context, not authority. Cerebro independently enforces the risk engine after the model response and again immediately before broker submission.
 
@@ -96,34 +96,33 @@ The UI is organized around Dashboard, Markets, Watchlist, Strategies, Orders, Po
 
 Navigation uses hash routes such as `#/strategies` and `#/orders`, so browser refresh, Back and Forward preserve the selected module instead of returning to Dashboard. Cross-module links use the same navigation layer; order/portfolio/watchlist/AI symbols can open directly in Markets.
 
-Reusable collapsible sections and bounded scroll regions are used for large datasets, including quant rankings, AI decisions, research errors, positions, order history and activity logs.
+Reusable collapsible sections and bounded scroll regions are used for large datasets. Nested result panes deliberately use normal scroll chaining: when an inner list reaches its top or bottom, mouse-wheel scrolling continues on the main page instead of trapping the pointer inside that section.
+
+### Strategies research inspection
+
+**Live Research Status** is an in-place inspector, not a navigation shortcut. Clicking a research symbol keeps you on Strategies and shows the stored result, retry state, cache status, or exact error payload underneath the status grid. Research-error cards also expand in place.
+
+Large quant and AI-decision lists remain internally scrollable, but scroll control hands back to the page at their boundaries.
 
 ### Watchlist
 
-The Watchlist supports:
-
-- live ticker/company suggestions
-- explicit Search button and Enter-to-search
-- manual Add / Remove
-- direct Markets navigation
-- batched live snapshots for all watched symbols
-- current traded price, absolute change and percentage change
-- quote refresh without losing the stored watchlist if market data temporarily fails
-- short-lived server-side search caching so repeated type-ahead queries do not repeatedly scan the full symbol universe
+The Watchlist supports live ticker/company suggestions, explicit Search button and Enter-to-search, manual Add / Remove, direct Markets navigation, batched live snapshots, current traded price/change/% change, graceful quote failures and short-lived server-side search caching.
 
 ### Activity / Logs
 
-The Activity page is a persistent SQLite audit trail with:
+The Activity page combines the persistent SQLite audit trail with live events from an active AI workflow. It supports:
 
 - text search
 - category and level filters
 - automatic refresh
-- expandable event rows
+- events collapsed by default
+- individual event expansion
+- **Expand all / Collapse all** controls
 - raw structured event details
 - symbol/order metadata
 - deep links back to Markets or Orders
 
-Order previews, risk decisions, order submissions/cancellations, watchlist changes, AI workflow starts/completions/failures, history clears and AI approvals/rejections are auditable events.
+Live quant/research/model/risk workflow events appear while a run is in progress; durable audit entries remain stored separately in SQLite for important workflow/order/watchlist actions.
 
 ### Orders and Portfolio
 
@@ -143,7 +142,7 @@ A manual AI run always performs a fresh quant pass before the AI stages.
 
 ## Settings
 
-Settings are SQLite-backed and most behaviour is runtime configurable without rebuilding containers. Important groups include discovery limits, quant weights, data-quality filters, research model, **Parallel Research Clusters**, decision model/reasoning effort, AI context limits, deterministic portfolio/risk limits and execution controls.
+Settings are SQLite-backed and most behaviour is runtime configurable without rebuilding containers. Important groups include discovery limits, quant weights, data-quality filters, research model, **Parallel Research Clusters**, decision model/reasoning effort, **Decision Model Web Research**, AI context limits, deterministic portfolio/risk limits and execution controls.
 
 The OpenAI API key is treated as a secret and is not returned to the browser.
 
@@ -160,7 +159,7 @@ docker compose build cerebro cerebroui
 docker compose up -d cerebro cerebroui
 ```
 
-For Portainer GitOps testing of this feature branch, use the normal clone URL and repository reference:
+For Portainer GitOps testing of this feature branch:
 
 ```text
 Repository: https://github.com/XpertStent/moomoo-opend.git
