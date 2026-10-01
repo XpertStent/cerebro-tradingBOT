@@ -17,22 +17,28 @@ class SelectAccountRequest(BaseModel):
     account_id: str
 
 
+def _status(refresh=False):
+    status = trading.trading_status(refresh=refresh)
+    status["unlock_hash_configured"] = bool(configured_unlock_hash())
+    return status
+
+
 @router.get("/status")
 def trading_status():
-    return trading.trading_status(refresh=False)
+    return _status(refresh=False)
 
 
 @router.get("/accounts")
 def trading_accounts():
     try:
-        status = trading.trading_status(refresh=True)
+        status = _status(refresh=True)
         return {
             "mode": status.get("mode"),
             "selected_account": status.get("account"),
             "accounts": status.get("available_live_accounts") or [],
             "unlocked": status.get("unlocked"),
             "ready": status.get("ready"),
-            "unlock_hash_configured": bool(configured_unlock_hash()),
+            "unlock_hash_configured": status.get("unlock_hash_configured"),
             "error": status.get("error"),
         }
     except Exception as exc:
@@ -46,7 +52,7 @@ def select_account(payload: SelectAccountRequest):
         return {
             "selected": True,
             "account": account,
-            "status": trading.trading_status(refresh=True),
+            "status": _status(refresh=True),
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -63,7 +69,7 @@ def unlock_trade(payload: UnlockRequest | None = None):
         result = trading.unlock_trade(password_md5=password_md5)
         return {
             **result,
-            "status": trading.trading_status(refresh=True),
+            "status": _status(refresh=True),
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -84,7 +90,7 @@ def lock_trade():
         result = trading.lock_trade()
         return {
             **result,
-            "status": trading.trading_status(refresh=False),
+            "status": _status(refresh=False),
         }
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
