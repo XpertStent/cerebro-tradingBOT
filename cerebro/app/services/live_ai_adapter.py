@@ -110,7 +110,6 @@ def install_live_ai_execution(ai_execution):
             )
             raise RuntimeError("Final account-aware risk check blocked execution: " + "; ".join(failed))
 
-        ai_memory.set_execution_result(decision_id, status="APPROVED")
         account = trading.current_account(refresh=True)
         broker = trading.place_order(
             symbol=order["symbol"],
@@ -120,6 +119,9 @@ def install_live_ai_execution(ai_execution):
             price=order.get("price"),
             remark=f"CEREBRO:AI:{decision_id}",
         )
+        # Do not mark the memory record approved before place_order: when LIVE is
+        # locked the request must remain retryable/pending. Record EXECUTED only
+        # after OpenD has accepted the broker submission.
         ai_memory.set_execution_result(
             decision_id,
             status="EXECUTED",
