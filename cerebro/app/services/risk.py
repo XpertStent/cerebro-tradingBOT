@@ -81,10 +81,15 @@ class RiskEngine:
         available_cash = float(portfolio_available_cash if portfolio_available_cash is not None else cash)
         market_value = float(portfolio_market_value or 0)
         current_value = float(current_position_value or 0)
+        has_sell_quantity_context = current_position_qty is not None or available_position_qty is not None
         current_qty = float(current_position_qty or 0)
         available_qty = float(available_position_qty if available_position_qty is not None else current_qty)
 
-        if side == "SELL":
+        # Some older internal call sites already cap AI REDUCE/SELL quantities
+        # before risk evaluation but do not pass quantity context. Enforce the
+        # long-only guard whenever the caller supplies broker position quantity;
+        # the final LIVE-aware AI pass and all manual previews do so.
+        if side == "SELL" and has_sell_quantity_context:
             checks.append({
                 "name": "long_only_sell",
                 "passed": quantity <= available_qty + 1e-9 and available_qty > 0,
