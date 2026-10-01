@@ -107,6 +107,20 @@ class AIExecutionService:
         quantity = int(max(0, (current_value - target_value) // price))
         return "SELL", min(quantity, int(current_qty))
 
+    def _normalize_minimum_buy(self, *, action, total_value, current_value, price):
+        """Return the smallest target exposure that represents one whole share.
+
+        Cerebro executes whole shares. A structured BUY/ADD intent that rounds to
+        less than one share is internally inconsistent: the action says to own
+        more, while the target says to buy nothing. In that narrow case we
+        normalize the target to exactly one additional share and still send the
+        resulting order through every deterministic risk check.
+        """
+        if action not in {"BUY", "ADD"} or total_value <= 0 or price <= 0:
+            return None
+        target_value = current_value + price
+        return (target_value / total_value) * 100.0
+
     def build(self, *, context, decision_result, memory_run_id=None):
         account = context.get("portfolio", {}).get("account") or {}
         positions = self._position_map(context)
@@ -152,6 +166,8 @@ class AIExecutionService:
                 "thesis_update": item.get("thesis_update"),
                 "thesis_invalidation": item.get("thesis_invalidation"),
                 "desired_exposure_pct": item.get("desired_exposure_pct"),
+                "original_desired_exposure_pct": item.get("desired_exposure_pct"),
+                "sizing_adjustment": None,
                 "status": "NO_ORDER",
                 "proposal_type": "ORDER" if action in ORDER_ACTIONS else "DECISION",
                 "order": None,
@@ -216,9 +232,33 @@ class AIExecutionService:
                     current_qty=current_qty,
                     price=price,
                 )
-            except ValueError as exc:
+            except (ValueError, TypeError):
+                side, quantity = ("BUY", 0) if action in {"BUY", "ADD"} else (None, 0)
+
+            # If BUY/ADD would otherwise become a misleading NO_ORDER because
+            # the model rounded its exposure below one whole share (including
+            # 0.00%), normalize to the smallest executable interpretation of the
+            # explicit action: one additional share. Risk still has final say.
+            if action in {"BUY", "ADD"} and quantity <= 0:
+                normalized_target = self._normalize_minimum_buy(
+                    action=action,
+                    total_value=total_value,
+                    current_value=current_value,
+                    price=price,
+                )
+                if normalized_target is not None:
+                    target_pct = normalized_target
+                    side = "BUY"
+                    quantity = 1
+                    proposal["desired_exposure_pct"] = normalized_target
+                    proposal["sizing_adjustment"] = (
+                        "Model BUY/ADD target rounded below one whole share; Cerebro "
+                        "normalized the target to one additional share before risk validation."
+                    )
+
+            if side is None:
                 proposal["status"] = "BLOCKED"
-                proposal["message"] = str(exc)
+                proposal["message"] = f"{action} requires a valid desired_exposure_pct"
                 ai_memory.set_execution_result(
                     record["id"], status="REJECTED",
                     rejection_code="MISSING_TARGET_EXPOSURE",
@@ -283,7 +323,11 @@ class AIExecutionService:
                 )
             else:
                 proposal["status"] = "PENDING_APPROVAL"
-                proposal["message"] = "Ready for manual approval"
+                proposal["message"] = (
+                    "Ready for manual approval · minimum one-share sizing applied"
+                    if proposal.get("sizing_adjustment")
+                    else "Ready for manual approval"
+                )
                 ai_memory.set_execution_result(record["id"], status="DEFERRED")
 
                 reserved_value = float(risk_result.get("estimated_value") or 0)
@@ -302,6 +346,9 @@ class AIExecutionService:
             "auto_execute": settings.get_bool("execution.auto_execute"),
             "proposals": proposals,
             "persisted_decision_count": len(proposals),
+            "pending_approval_count": sum(
+                1 for proposal in proposals if proposal.get("status") == "PENDING_APPROVAL"
+            ),
             "projected_portfolio": {
                 "cash": round(projected_cash, 2),
                 "market_value": round(projected_market_value, 2),
@@ -343,7 +390,14 @@ class AIExecutionService:
             price=price,
         )
         if quantity <= 0:
-            raise RuntimeError("Target exposure no longer requires a whole-share order")
+            # A normalized one-share proposal can drift slightly with fresh
+            # prices/account value. Preserve the minimum whole-share intent, but
+            # still subject that single share to the fresh deterministic risk
+            # check below.
+            if action in {"BUY", "ADD"} and proposal.get("sizing_adjustment"):
+                side, quantity = "BUY", 1
+            else:
+                raise RuntimeError("Target exposure no longer requires a whole-share order")
 
         order_type = str(settings.get("execution.default_order_type") or "MARKET").upper()
         fresh_risk = risk.evaluate_order(
