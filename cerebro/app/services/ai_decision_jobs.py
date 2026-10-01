@@ -387,7 +387,7 @@ class AIDecisionJobManager:
                     run_id,
                     stage="RISK_PROPOSALS",
                     percent=88.0,
-                    message="Converting AI intents into deterministic order proposals",
+                    message="Converting AI intents into deterministic decision proposals",
                     ai={
                         "stage": "DECISION_COMPLETE",
                         "candidate_count": len(context.get("candidates") or []),
@@ -425,14 +425,14 @@ class AIDecisionJobManager:
                         run_id,
                         stage="AUTO_EXECUTION",
                         percent=94.0,
-                        message="Auto-execution enabled: submitting risk-approved paper proposals",
+                        message="Auto-execution enabled: applying approved AI decisions",
                     )
-                    self._event(run_id, "AUTO_EXECUTION", "Auto-execution enabled for this run")
+                    self._event(run_id, "AUTO_EXECUTION", "Automatic AI decision application enabled for this run")
                     executed = []
                     for proposal in proposal_bundle.get("proposals") or []:
                         if proposal.get("status") == "PENDING_APPROVAL":
                             try:
-                                executed.append(ai_execution.execute(proposal))
+                                executed.append(ai_execution.approve(proposal))
                             except Exception as exc:
                                 executed.append(self._execution_failed(proposal, exc))
                         else:
@@ -446,9 +446,9 @@ class AIDecisionJobManager:
 
                 final_stage = "AWAITING_APPROVAL" if not proposal_bundle.get("auto_execute") else "COMPLETE"
                 final_message = (
-                    "AI decision complete — review and approve or reject actionable proposals"
+                    "AI decision complete — review and approve or reject actionable decisions"
                     if not proposal_bundle.get("auto_execute")
-                    else "AI decision and automatic paper execution complete"
+                    else "AI decisions and automatic PAPER/watchlist actions complete"
                 )
                 self.update(
                     run_id,
@@ -553,7 +553,7 @@ class AIDecisionJobManager:
         for proposal in execution.get("proposals") or []:
             if proposal.get("status") == "PENDING_APPROVAL":
                 try:
-                    updated.append(ai_execution.execute(proposal))
+                    updated.append(ai_execution.approve(proposal))
                 except Exception as exc:
                     failures += 1
                     updated.append(self._execution_failed(proposal, exc))
@@ -569,9 +569,9 @@ class AIDecisionJobManager:
             run_id,
             stage="COMPLETE",
             message=(
-                "AI decision approved; eligible paper orders submitted"
+                "AI decisions approved; eligible PAPER orders and watchlist actions applied"
                 if failures == 0
-                else f"AI decision approved with {failures} broker execution failure(s)"
+                else f"AI decisions approved with {failures} application failure(s)"
             ),
             result=result,
         )
@@ -602,10 +602,10 @@ class AIDecisionJobManager:
         self.update(
             run_id,
             stage="COMPLETE",
-            message="AI decision rejected — no pending proposals were executed",
+            message="AI decisions rejected — no pending trade or watchlist actions were applied",
             result=result,
         )
-        self._event(run_id, "APPROVAL", "Manual decision rejected; no pending AI orders executed")
+        self._event(run_id, "APPROVAL", "Manual decisions rejected; no pending AI actions applied")
         return result
 
 
