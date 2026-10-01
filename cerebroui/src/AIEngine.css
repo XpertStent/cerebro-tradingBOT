@@ -20,8 +20,10 @@
 .aiProgressFill { height: 100%; background: #111827; transition: width .25s ease; }
 .aiProgressMeta { margin-top: 10px; display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
 .aiMetric { background: #f8fafc; border: 1px solid #eef2f5; border-radius: 10px; padding: 10px; min-width: 0; }
+.aiMetric.metricError { border-color: #fecaca; background: #fff7f7; }
 .aiMetric span { display: block; color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .aiMetric strong { display: block; margin-top: 4px; color: #253047; font-size: 14px; overflow-wrap: anywhere; }
+.aiMetric.metricError strong { color: #b91c1c; }
 .aiThinkingBanner { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; display: flex; gap: 10px; align-items: flex-start; }
 .aiThinkingBanner strong, .aiThinkingBanner span { display: block; }
 .aiThinkingBanner span { margin-top: 3px; font-size: 12px; color: #64748b; }
@@ -91,8 +93,19 @@
 .researchSymbol span { font-size: 10px; font-weight: 800; }
 .researchSymbol span.good { color: #15803d; }
 .researchSymbol span.bad { color: #b91c1c; }
+.researchErrorList { display: grid; gap: 8px; }
+.researchErrorCard { border: 1px solid #fecaca; border-radius: 10px; background: #fffafa; overflow: hidden; }
+.researchErrorCard summary { list-style: none; cursor: pointer; padding: 11px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.researchErrorCard summary::-webkit-details-marker { display: none; }
+.researchErrorCard summary div { min-width: 0; }
+.researchErrorCard summary strong, .researchErrorCard summary span { display: block; }
+.researchErrorCard summary strong { color: #991b1b; }
+.researchErrorCard summary div span { color: #64748b; font-size: 11px; margin-top: 2px; }
+.researchErrorCard summary > span { color: #b91c1c; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.researchErrorBody { border-top: 1px solid #fecaca; padding: 11px 12px; }
+.researchErrorBody pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 10px; color: #7f1d1d; font: inherit; font-size: 12px; line-height: 1.45; }
 .cancelOrderButton { padding: 6px 9px; background: #fff; color: #b91c1c; border-color: #fecaca; font-size: 12px; }
 .orderNoAction { color: #cbd5e1; }
 @media (max-width: 1100px) { .aiProgressMeta { grid-template-columns: repeat(3,minmax(0,1fr)); } }
 @media (max-width: 950px) { .aiHero { flex-direction: column; align-items: flex-start; } .aiHeroActions { justify-content: flex-start; } .aiProgressMeta, .aiSummaryGrid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
-@media (max-width: 650px) { .aiProgressMeta, .aiSummaryGrid, .aiDetailGrid { grid-template-columns: 1fr; } .aiDecisionTop { align-items: flex-start; flex-wrap: wrap; } .aiConfidence { margin-left: 0; } .aiPerDecisionActions { justify-content: stretch; } .aiPerDecisionActions button { width: 100%; justify-content: center; } }
+@media (max-width: 650px) { .aiProgressMeta, .aiSummaryGrid, .aiDetailGrid { grid-template-columns: 1fr; } .aiDecisionTop { align-items: flex-start; flex-wrap: wrap; } .aiConfidence { margin-left: 0; } .aiPerDecisionActions { justify-content: stretch; } .aiPerDecisionActions button { width: 100%; justify-content: center; } .researchErrorCard summary { align-items: flex-start; } }
