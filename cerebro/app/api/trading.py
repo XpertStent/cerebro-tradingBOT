@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -60,28 +62,40 @@ def select_account(payload: SelectAccountRequest):
 
 @router.post("/unlock")
 def unlock_trade(payload: UnlockRequest | None = None):
+    password_md5 = None
     try:
         password_md5 = (payload.password_md5 if payload else None) or configured_unlock_hash()
+        if password_md5:
+            password_md5 = password_md5.strip().lower()
         if not password_md5:
             raise ValueError(
-                "No server-side live unlock hash is configured. Set MOOMOO_TRADING_PASSWORD_MD5 on the Cerebro container and redeploy."
+                "Enter your trading password or configure MOOMOO_TRADING_PASSWORD_MD5."
             )
+        if not re.fullmatch(r"[0-9a-f]{32}", password_md5):
+            raise ValueError("Invalid trading credential.")
         result = trading.unlock_trade(password_md5=password_md5)
         return {
             **result,
             "status": _status(refresh=True),
         }
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        detail = (
+            "Invalid trading credential." if password_md5
+            else "Enter your trading password or configure MOOMOO_TRADING_PASSWORD_MD5."
+        )
+        raise HTTPException(status_code=400, detail=detail) from None
     except Exception as exc:
         activity.write(
             category="SECURITY",
             action="LIVE_TRADING_UNLOCK_FAILED",
             message="Live trading unlock failed",
             level="ERROR",
-            details={"error": str(exc)},
+            details={"error": "Broker unlock failed"},
         )
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=403,
+            detail="Unable to unlock trading. Check your trading password and OpenD connection.",
+        ) from None
 
 
 @router.post("/lock")

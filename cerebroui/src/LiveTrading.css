@@ -177,7 +177,8 @@
   font-weight: 750;
 }
 
-.unlockField select {
+.unlockField select,
+.unlockField input {
   width: 100%;
   min-height: 42px;
   padding: 0 11px;

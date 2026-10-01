@@ -49,15 +49,17 @@ The CerebroUI header displays a persistent execution badge:
 
 When LIVE mode is active, the top-right **Unlock Trading** button is visible throughout the application. The dialog lets the operator choose the eligible REAL account and asks the backend to unlock OpenD.
 
-For security, the browser does not collect or store the raw Moomoo transaction credential. Configure the lowercase MD5 form on the `cerebro` container as:
+Enter your six-digit Moomoo trading/transaction password in the masked dialog field. The browser computes lowercase MD5 locally and sends only `password_md5` to the backend; the raw input is cleared before any network request. Neither credential is persisted by Cerebro.
+
+Alternatively, leave the field blank to use an optional server-side credential configured on the `cerebro` container:
 
 ```text
 MOOMOO_TRADING_PASSWORD_MD5=<your-md5-value>
 ```
 
-The value is read only from the backend container environment and passed to OpenD for unlock. Do not commit it to this repository. `.env` is ignored by Git.
+The submitted UI hash takes precedence over the environment fallback. Without a configured fallback, the dialog requires exactly six digits. Both request and fallback hashes must be 32 hexadecimal characters. Do not commit credentials; `.env` is ignored by Git.
 
-The UI reports when the backend unlock credential has not been configured and disables the final unlock action until it is available.
+The MD5 is itself a replayable credential. Use HTTPS for production credential transport; plain LAN HTTP does not encrypt the hash in transit.
 
 A broker action that encounters a locked OpenD session automatically pauses in the UI, opens the same unlock dialog, and retries the original request after a successful unlock. This covers manual order placement, order cancellation and AI broker execution. WATCH decisions do not require broker unlock because they only update Cerebro's monitored securities.
 
@@ -77,7 +79,7 @@ and use:
 refs/heads/feature/live-trading
 ```
 
-For LIVE testing, add this environment variable to the stack/Portainer environment without placing the value in Git:
+For optional server-side unlock, add this environment variable to the stack/Portainer environment without placing the value in Git:
 
 ```text
 MOOMOO_TRADING_PASSWORD_MD5=<value>
@@ -330,7 +332,7 @@ Before testing a real order:
 
 1. Deploy `feature/live-trading`, not `main`.
 2. Confirm OpenD is logged in.
-3. Configure `MOOMOO_TRADING_PASSWORD_MD5` in Portainer; never commit it.
+3. Enter your trading password in the unlock dialog, or optionally configure `MOOMOO_TRADING_PASSWORD_MD5` in Portainer; never commit it.
 4. Leave `execution.auto_execute` OFF for the first tests.
 5. In Settings, switch `trading.mode` to `live` and save.
 6. Confirm the red `LIVE TRADING` badge appears.

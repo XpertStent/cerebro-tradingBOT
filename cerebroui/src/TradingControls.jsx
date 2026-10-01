@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { LockKeyhole, RefreshCw, ShieldAlert, Unlock, X } from "lucide-react";
+import md5 from "blueimp-md5";
 import "./LiveTrading.css";
 
 
@@ -47,6 +48,7 @@ export default function TradingControls({ onStatus }) {
   const [selected, setSelected] = useState("");
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [tradingPassword, setTradingPassword] = useState("");
 
   async function load(refresh = false) {
     try {
@@ -76,6 +78,7 @@ export default function TradingControls({ onStatus }) {
     load(false);
     const timer = setInterval(() => load(false), 10000);
     const unlockRequired = event => {
+      setTradingPassword("");
       setPending(event.detail || null);
       setModal(true);
       setMessage({ kind: "warn", text: "The broker action is paused until LIVE trading is unlocked." });
@@ -90,7 +93,7 @@ export default function TradingControls({ onStatus }) {
 
   const live = String(status?.mode || "").toUpperCase() === "LIVE";
   const unlocked = Boolean(status?.unlocked);
-  const unlockConfigured = status?.unlock_hash_configured !== false;
+  const unlockConfigured = Boolean(status?.unlock_hash_configured);
 
   async function selectAccount() {
     if (!selected) throw new Error("Select the REAL account Cerebro should use.");
@@ -111,14 +114,19 @@ export default function TradingControls({ onStatus }) {
     setBusy(true);
     setMessage(null);
     try {
-      if (!unlockConfigured) {
-        throw new Error("MOOMOO_TRADING_PASSWORD_MD5 is not configured on the Cerebro container.");
+      if (tradingPassword && !/^\d{6}$/.test(tradingPassword)) {
+        throw new Error("Enter exactly 6 digits for your trading password.");
       }
+      if (!tradingPassword && !unlockConfigured) {
+        throw new Error("Enter your 6-digit Moomoo trading password.");
+      }
+      const passwordMd5 = tradingPassword ? md5(tradingPassword).toLowerCase() : null;
+      setTradingPassword("");
       await selectAccount();
       const response = await nativeFetch("/api/trading/unlock", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(passwordMd5 ? { password_md5: passwordMd5 } : {}),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
@@ -132,6 +140,7 @@ export default function TradingControls({ onStatus }) {
     } catch (error) {
       setMessage({ kind: "error", text: error.message });
     } finally {
+      setTradingPassword("");
       setBusy(false);
     }
   }
@@ -152,6 +161,8 @@ export default function TradingControls({ onStatus }) {
   }
 
   function closeModal() {
+    if (busy) return;
+    setTradingPassword("");
     pending?.cancel?.();
     setPending(null);
     setModal(false);
@@ -172,7 +183,7 @@ export default function TradingControls({ onStatus }) {
               <Unlock size={16}/>Unlocked
             </button>
           ) : (
-            <button className="tradingLockButton locked" onClick={() => { setModal(true); load(true); }} disabled={busy}>
+            <button className="tradingLockButton locked" onClick={() => { setTradingPassword(""); setModal(true); load(true); }} disabled={busy}>
               <LockKeyhole size={16}/>Unlock Trading
             </button>
           )
@@ -186,21 +197,21 @@ export default function TradingControls({ onStatus }) {
               <div>
                 <span className="liveMiniBadge">LIVE</span>
                 <h2>Unlock Moomoo Trading</h2>
-                <p>Choose the REAL account, then unlock OpenD using the server-side hashed credential configured in Portainer.</p>
+                <p>Choose the REAL account, then enter your Moomoo trading password to unlock OpenD.</p>
               </div>
-              <button className="unlockClose" onClick={closeModal}><X size={18}/></button>
+              <button className="unlockClose" onClick={closeModal} disabled={busy}><X size={18}/></button>
             </div>
 
             <div className="unlockWarning">
               <ShieldAlert size={19}/>
-              <span>No trading credential is collected by the browser. Cerebro uses MOOMOO_TRADING_PASSWORD_MD5 from the backend container environment.</span>
+              <span>Your password is hashed locally in your browser and is not stored by Cerebro.</span>
             </div>
 
-            {!unlockConfigured && (
-              <div className="unlockStatus error">
-                LIVE unlock is not configured. Add MOOMOO_TRADING_PASSWORD_MD5 to the Cerebro service in Portainer and redeploy the stack.
-              </div>
-            )}
+            <div className="unlockStatus warn">
+              {unlockConfigured
+                ? "You can leave the password blank to use the server-side configured credential."
+                : "No server-side credential is configured. Enter your trading password below."}
+            </div>
 
             <label className="unlockField">
               <span>REAL trading account</span>
@@ -214,13 +225,27 @@ export default function TradingControls({ onStatus }) {
               </select>
             </label>
 
+            <label className="unlockField">
+              <span>Trading password</span>
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={6}
+                value={tradingPassword}
+                disabled={busy}
+                onChange={event => setTradingPassword(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="6-digit trading password"
+              />
+            </label>
+
             {accounts.length === 0 && <div className="unlockStatus error">No ACTIVE REAL account with US trading permission was discovered.</div>}
             {message && <div className={`unlockStatus ${message.kind}`}>{message.text}</div>}
 
             <div className="unlockActions">
               <button className="unlockCancel" onClick={() => load(true)} disabled={busy}><RefreshCw size={15}/>Refresh accounts</button>
               <button className="unlockCancel" onClick={closeModal} disabled={busy}>Cancel</button>
-              <button className="unlockConfirm" onClick={unlock} disabled={busy || !selected || !unlockConfigured}>
+              <button className="unlockConfirm" onClick={unlock} disabled={busy || !selected || (tradingPassword ? tradingPassword.length !== 6 : !unlockConfigured)}>
                 <Unlock size={16}/>{busy ? "Unlocking…" : pending ? "Unlock & Continue" : "Unlock Trading"}
               </button>
             </div>
