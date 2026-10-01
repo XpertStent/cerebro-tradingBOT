@@ -140,14 +140,22 @@ def _individual_action(run_id: str, decision_id: int, action: str):
         )
 
     symbol = proposal.get("symbol")
+    proposal_action = str(proposal.get("action") or "").upper()
     if action == "approve":
-        updated = ai_execution.execute(proposal)
-        message = f"Approved and executed {symbol}"
+        updated = ai_execution.approve(proposal)
+        if proposal_action == "WATCH":
+            message = f"Approved WATCH for {symbol}; added to Monitored Securities"
+        else:
+            message = f"Approved and executed {symbol}"
         event_kind = "SUCCESS"
         audit_action = "AI_PROPOSAL_APPROVED"
     else:
         updated = ai_execution.reject(proposal, reason="Rejected individually by user")
-        message = f"Rejected {symbol}; no order submitted"
+        message = (
+            f"Rejected WATCH for {symbol}; watchlist unchanged"
+            if proposal_action == "WATCH"
+            else f"Rejected {symbol}; no order submitted"
+        )
         event_kind = "INFO"
         audit_action = "AI_PROPOSAL_REJECTED"
 
@@ -163,9 +171,9 @@ def _individual_action(run_id: str, decision_id: int, action: str):
         run_id,
         stage="AWAITING_APPROVAL" if pending else "COMPLETE",
         message=(
-            f"{message}. {pending} proposal(s) still awaiting a decision."
+            f"{message}. {pending} decision(s) still awaiting approval."
             if pending
-            else f"{message}. All actionable proposals are resolved."
+            else f"{message}. All actionable decisions are resolved."
         ),
         result=result,
     )
@@ -181,10 +189,11 @@ def _individual_action(run_id: str, decision_id: int, action: str):
         action=audit_action,
         message=message,
         symbol=symbol,
-        order_id=(updated.get("order") or {}).get("order_id"),
+        order_id=str((updated.get("broker_order") or {}).get("order_id") or "") or None,
         details={
             "run_id": run_id,
             "decision_id": decision_id,
+            "decision_action": proposal_action,
             "proposal_status": updated.get("status"),
             "pending_remaining": pending,
         },
@@ -215,7 +224,7 @@ def approve_decision(run_id: str):
         activity.write(
             category="AI",
             action="AI_BATCH_APPROVED",
-            message="Approved all remaining AI proposals",
+            message="Approved all remaining AI decisions",
             details={"run_id": run_id},
         )
         return result
@@ -230,7 +239,7 @@ def reject_decision(run_id: str):
         activity.write(
             category="AI",
             action="AI_BATCH_REJECTED",
-            message="Rejected all remaining AI proposals",
+            message="Rejected all remaining AI decisions",
             details={"run_id": run_id},
         )
         return result
