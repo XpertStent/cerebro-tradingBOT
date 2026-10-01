@@ -1,3 +1,5 @@
+import random
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -62,6 +64,75 @@ class AIRunContextBuilder:
             "state": us,
         }
 
+    def _risk_policy(self):
+        """Expose the deterministic limits to the decision model as context.
+
+        The model still cannot override these values. This only lets it choose
+        realistic target exposures instead of proposing orders that are
+        obviously guaranteed to be blocked later.
+        """
+        return {
+            "risk_engine_enabled": settings.get_bool("risk.enabled"),
+            "trading_enabled": settings.get_bool("trading.enabled"),
+            "trading_mode": str(settings.get("trading.mode")),
+            "max_order_value_usd": float(settings.get("risk.max_order_value")),
+            "max_daily_loss_usd": float(settings.get("risk.max_daily_loss")),
+            "max_position_pct": float(settings.get("risk.max_position_pct")),
+            "max_invested_pct": float(settings.get("risk.max_invested_pct")),
+            "min_cash_reserve_pct": float(settings.get("risk.min_cash_reserve_pct")),
+            "max_new_positions_per_run": int(settings.get("risk.max_new_positions_per_run")),
+            "max_order_adv_pct": float(settings.get("risk.max_order_adv_pct")),
+            "default_order_type": str(settings.get("execution.default_order_type")),
+            "auto_execute": settings.get_bool("execution.auto_execute"),
+            "execution_boundary": "PAPER_ONLY",
+            "sizing_note": (
+                "desired_exposure_pct is converted to whole shares and the resulting order "
+                "must satisfy every deterministic limit above."
+            ),
+        }
+
+    def _is_retryable_research_error(self, exc):
+        text = str(exc).lower()
+        retry_markers = (
+            "429", "rate limit", "rate_limit", "too many requests",
+            "timeout", "timed out", "temporarily unavailable",
+            "502", "503", "504", "connection reset", "connection error",
+        )
+        return any(marker in text for marker in retry_markers)
+
+    def _research_one_with_retry(self, item, retry_callback=None):
+        # Twelve-way research is fast when capacity permits, but model/web
+        # search quotas can burst. Retry transient/rate-limit failures with
+        # jitter rather than turning a temporary 429 into missing research.
+        max_attempts = 4
+        base_delay = 2.0
+        symbol = item["symbol"]
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return ai_web_research.research(
+                    symbol=symbol,
+                    company_name=item.get("company_name"),
+                    quant_context=item.get("quant_context") or {},
+                    relationships=item.get("relationships") or [],
+                )
+            except Exception as exc:
+                if attempt >= max_attempts or not self._is_retryable_research_error(exc):
+                    raise
+
+                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0.0, 1.0)
+                if retry_callback:
+                    retry_callback(
+                        symbol=symbol,
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        delay_seconds=round(delay, 1),
+                        error=str(exc),
+                    )
+                time.sleep(delay)
+
+        raise RuntimeError(f"Research retry loop exhausted for {symbol}")
+
     def _research_many_with_progress(self, requests, progress_callback=None):
         if not requests:
             return {}
@@ -74,16 +145,26 @@ class AIRunContextBuilder:
             if progress_callback:
                 progress_callback(total=total, complete=complete, **values)
 
+        def retry_emit(**values):
+            emit(
+                stage="RESEARCH_RETRY",
+                current_symbol=values.get("symbol"),
+                status=(
+                    f"RETRY {values.get('attempt')}/{values.get('max_attempts')} "
+                    f"in {values.get('delay_seconds')}s"
+                ),
+                retry_error=values.get("error"),
+                in_flight=min(total - complete, ai_web_research.max_workers),
+            )
+
         emit(stage="RESEARCH", current_symbol=None, status="STARTING")
 
         with ThreadPoolExecutor(max_workers=ai_web_research.max_workers) as executor:
             futures = {
                 executor.submit(
-                    ai_web_research.research,
-                    symbol=item["symbol"],
-                    company_name=item.get("company_name"),
-                    quant_context=item.get("quant_context") or {},
-                    relationships=item.get("relationships") or [],
+                    self._research_one_with_retry,
+                    item,
+                    retry_emit,
                 ): item["symbol"]
                 for item in requests
             }
@@ -120,6 +201,7 @@ class AIRunContextBuilder:
                     stage="RESEARCH",
                     current_symbol=symbol,
                     status=(output[symbol] or {}).get("status") or "DONE",
+                    error=(output[symbol] or {}).get("error"),
                     ready=ready,
                     errors=errors,
                     in_flight=max(0, min(total - complete, ai_web_research.max_workers)),
@@ -323,7 +405,7 @@ class AIRunContextBuilder:
             })
 
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "run": {
                 "type": run_type.upper(),
                 "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -335,6 +417,7 @@ class AIRunContextBuilder:
                 "research_request_count": len(research_requests),
             },
             "market_context": self._market_context(),
+            "deterministic_risk_policy": self._risk_policy(),
             "portfolio": {
                 "account": {
                     "mode": account.get("mode"),
