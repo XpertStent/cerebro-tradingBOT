@@ -6,38 +6,55 @@ from openai import OpenAI
 
 from app.services.ai_run_context import ai_run_context
 from app.services.openai_retry import is_retryable_openai_error, retry_delay
-from app.services.settings import settings
+from app.services.settings import DEFINITIONS, settings
 
 
-DECISION_SCHEMA_VERSION = 2
+DEFINITIONS.setdefault(
+    "ai.decision.web_search_enabled",
+    {
+        "section": "AI & Models",
+        "subsection": "Decision Model",
+        "label": "Decision Model Web Research",
+        "type": "boolean",
+        "default": True,
+        "description": (
+            "Allow the final portfolio decision model to independently verify or augment "
+            "the clustered research with live web search before returning decisions."
+        ),
+    },
+)
+
+DEFINITIONS.setdefault(
+    "ai.decision.search_context_size",
+    {
+        "section": "AI & Models",
+        "subsection": "Decision Model",
+        "label": "Decision Web Search Context Size",
+        "type": "enum",
+        "default": "medium",
+        "options": ["low", "medium", "high"],
+        "description": "Web-search context size available to the final decision model.",
+    },
+)
+
+
+DECISION_SCHEMA_VERSION = 3
 
 DECISION_SCHEMA = {
     "type": "object",
     "properties": {
-        "portfolio_summary": {
-            "type": "string",
-        },
-        "market_summary": {
-            "type": "string",
-        },
+        "portfolio_summary": {"type": "string"},
+        "market_summary": {"type": "string"},
         "decisions": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "symbol": {
-                        "type": "string",
-                    },
+                    "symbol": {"type": "string"},
                     "action": {
                         "type": "string",
                         "enum": [
-                            "BUY",
-                            "ADD",
-                            "HOLD",
-                            "REDUCE",
-                            "SELL",
-                            "WATCH",
-                            "IGNORE",
+                            "BUY", "ADD", "HOLD", "REDUCE", "SELL", "WATCH", "IGNORE",
                         ],
                     },
                     "confidence": {
@@ -45,18 +62,10 @@ DECISION_SCHEMA = {
                         "minimum": 0,
                         "maximum": 1,
                     },
-                    "reasoning": {
-                        "type": "string",
-                    },
-                    "what_changed": {
-                        "type": ["string", "null"],
-                    },
-                    "thesis_update": {
-                        "type": ["string", "null"],
-                    },
-                    "thesis_invalidation": {
-                        "type": ["string", "null"],
-                    },
+                    "reasoning": {"type": "string"},
+                    "what_changed": {"type": ["string", "null"]},
+                    "thesis_update": {"type": ["string", "null"]},
+                    "thesis_invalidation": {"type": ["string", "null"]},
                     "desired_exposure_pct": {
                         "type": ["number", "null"],
                         "minimum": 0,
@@ -77,11 +86,7 @@ DECISION_SCHEMA = {
             },
         },
     },
-    "required": [
-        "portfolio_summary",
-        "market_summary",
-        "decisions",
-    ],
+    "required": ["portfolio_summary", "market_summary", "decisions"],
     "additionalProperties": False,
 }
 
@@ -100,7 +105,21 @@ class AIDecisionEngine:
             raise RuntimeError("OpenAI API key is not configured")
         return OpenAI(api_key=api_key)
 
-    def _prompt(self, context):
+    def _prompt(self, context, *, web_search_enabled):
+        web_search_instruction = (
+            "You ALSO have live web search available. Independently verify or augment "
+            "the clustered research when it materially improves a decision, especially "
+            "for recent earnings/guidance, regulatory events, M&A, major contracts, "
+            "management changes, unusual price moves, conflicting evidence, stale data, "
+            "or symbols whose upstream research failed. Treat supplied structured research "
+            "as a strong evidence layer, not as a restriction on your own analysis. Use "
+            "reliable primary/major-news sources and do not invent facts."
+            if web_search_enabled
+            else
+            "Live web search is disabled for this decision request. Base external factual "
+            "claims on the supplied structured context and do not invent missing facts."
+        )
+
         return f"""
 You are the portfolio decision layer for Cerebro, an automated US-equity
 trading system.
@@ -116,9 +135,9 @@ never bypass deterministic risk controls.
 You are explicitly expected to perform independent investment analysis and
 reasoning on each supplied candidate. Synthesize the evidence; compare signals,
 quality, uncertainty, portfolio fit, and risk. Do not merely restate quant flags
-or mechanically copy prior decisions. You may reach your own conclusion from
-the supplied evidence, but do not invent external facts that are absent from
-the context.
+or mechanically copy prior decisions.
+
+{web_search_instruction}
 
 Allowed actions:
 - BUY: initiate a new position in a symbol not currently held.
@@ -147,13 +166,11 @@ Rules:
    portfolio concentration, available cash, existing thesis, and uncertainty
    all matter.
 7. A price discontinuity marked as a real event is not automatically bullish
-   or bearish. Use the supplied research assessment.
-8. Missing research is NOT by itself a command to WATCH. Use the quant data,
-   event-review state, portfolio context, memory, and any available research to
-   reason independently. If a candidate remains interesting but needs more
-   evidence, WATCH is appropriate. If it is not worth monitoring, use IGNORE.
-   If supplied evidence is already strong enough and risks are understood, a
-   BUY may still be justified without web research.
+   or bearish. Investigate or use the supplied research assessment.
+8. Missing/failed upstream research is NOT by itself a command to WATCH. When
+   web search is enabled, independently investigate material gaps before
+   deciding. Otherwise use the remaining evidence. WATCH only when the name is
+   genuinely worth monitoring; use IGNORE when it is not.
 9. `desired_exposure_pct` is a target percent of total portfolio value after
    the proposed action. Use null for WATCH and IGNORE. HOLD may use the
    approximate existing exposure or null if exact targeting is not justified.
@@ -162,9 +179,10 @@ Rules:
     invested-capital, cash-reserve, new-position, or liquidity limits. If a
     smaller starter allocation is appropriate, choose a compliant target. Do
     not force a trade merely to fit a limit.
-11. Confidence expresses confidence in the ACTION given the supplied evidence,
-    not a probability of making money.
-12. Keep reasoning decision-focused and grounded in supplied context.
+11. Confidence expresses confidence in the ACTION given the evidence, not a
+    probability of making money.
+12. Keep reasoning decision-focused and grounded in evidence. If live research
+    changes or contradicts upstream research, explain that in `what_changed`.
 13. `thesis_update` should capture the current investable thesis when useful.
     WATCH may carry a thesis if there is a genuine monitored setup. IGNORE
     should normally use null for thesis fields. `thesis_invalidation` should
@@ -189,10 +207,7 @@ Return only the requested structured result.
 
         held_symbols = {
             str(item.get("symbol")).upper()
-            for item in (
-                context.get("portfolio", {}).get("positions")
-                or []
-            )
+            for item in (context.get("portfolio", {}).get("positions") or [])
             if item.get("symbol")
         }
 
@@ -206,42 +221,28 @@ Return only the requested structured result.
             decision["action"] = action
 
             if symbol not in allowed_set:
-                raise RuntimeError(
-                    f"Decision model returned out-of-context symbol: {symbol}"
-                )
-
+                raise RuntimeError(f"Decision model returned out-of-context symbol: {symbol}")
             if symbol in seen:
-                raise RuntimeError(
-                    f"Decision model returned duplicate symbol: {symbol}"
-                )
+                raise RuntimeError(f"Decision model returned duplicate symbol: {symbol}")
             seen.add(symbol)
 
-            if symbol in held_symbols:
-                allowed_actions = {"ADD", "HOLD", "REDUCE", "SELL"}
-            else:
-                allowed_actions = {"BUY", "WATCH", "IGNORE"}
-
+            allowed_actions = (
+                {"ADD", "HOLD", "REDUCE", "SELL"}
+                if symbol in held_symbols
+                else {"BUY", "WATCH", "IGNORE"}
+            )
             if action not in allowed_actions:
                 raise RuntimeError(
-                    f"Invalid action {action} for {symbol}; allowed: "
-                    f"{sorted(allowed_actions)}"
+                    f"Invalid action {action} for {symbol}; allowed: {sorted(allowed_actions)}"
                 )
-
             if action in {"WATCH", "IGNORE"}:
                 decision["desired_exposure_pct"] = None
 
         missing = [symbol for symbol in allowed_symbols if symbol not in seen]
         if missing:
-            raise RuntimeError(
-                "Decision model omitted candidate symbols: "
-                + ", ".join(missing)
-            )
-
+            raise RuntimeError("Decision model omitted candidate symbols: " + ", ".join(missing))
         if len(decisions) != len(allowed_symbols):
-            raise RuntimeError(
-                "Decision count does not match candidate count"
-            )
-
+            raise RuntimeError("Decision count does not match candidate count")
         return result
 
     def _request_with_retry(
@@ -250,19 +251,19 @@ Return only the requested structured result.
         model,
         reasoning_effort,
         prompt,
+        web_search_enabled,
+        search_context_size,
         retry_callback=None,
     ):
         """Run the single portfolio-decision request with rate-limit recovery."""
         max_attempts = 4
         for attempt in range(1, max_attempts + 1):
             try:
-                return self._client().responses.create(
-                    model=model,
-                    reasoning={
-                        "effort": reasoning_effort,
-                    },
-                    input=prompt,
-                    text={
+                kwargs = {
+                    "model": model,
+                    "reasoning": {"effort": reasoning_effort},
+                    "input": prompt,
+                    "text": {
                         "format": {
                             "type": "json_schema",
                             "name": "cerebro_portfolio_decisions",
@@ -270,7 +271,17 @@ Return only the requested structured result.
                             "schema": DECISION_SCHEMA,
                         }
                     },
-                )
+                }
+                if web_search_enabled:
+                    kwargs.update({
+                        "tools": [{
+                            "type": "web_search",
+                            "search_context_size": search_context_size,
+                        }],
+                        "tool_choice": "required",
+                        "include": ["web_search_call.action.sources"],
+                    })
+                return self._client().responses.create(**kwargs)
             except Exception as exc:
                 if attempt >= max_attempts or not is_retryable_openai_error(exc):
                     raise
@@ -294,8 +305,21 @@ Return only the requested structured result.
                         error=str(exc),
                     )
                 time.sleep(delay)
-
         raise RuntimeError("Decision model retry loop exhausted")
+
+    def _web_search_usage(self, response):
+        calls = 0
+        sources = set()
+        for item in getattr(response, "output", None) or []:
+            if getattr(item, "type", None) != "web_search_call":
+                continue
+            calls += 1
+            action = getattr(item, "action", None)
+            for source in getattr(action, "sources", None) or []:
+                url = getattr(source, "url", None)
+                if url:
+                    sources.add(str(url))
+        return {"calls": calls, "source_count": len(sources)}
 
     def run(
         self,
@@ -313,24 +337,24 @@ Return only the requested structured result.
 
         candidates = context.get("candidates") or []
         if not candidates:
-            raise RuntimeError(
-                "Decision context contains no candidates"
-            )
+            raise RuntimeError("Decision context contains no candidates")
 
         model = str(settings.get("ai.decision.model"))
-        reasoning_effort = str(
-            settings.get("ai.decision.reasoning_effort")
-        )
+        reasoning_effort = str(settings.get("ai.decision.reasoning_effort"))
+        web_search_enabled = settings.get_bool("ai.decision.web_search_enabled")
+        search_context_size = str(settings.get("ai.decision.search_context_size"))
 
         response = self._request_with_retry(
             model=model,
             reasoning_effort=reasoning_effort,
-            prompt=self._prompt(context),
+            prompt=self._prompt(context, web_search_enabled=web_search_enabled),
+            web_search_enabled=web_search_enabled,
+            search_context_size=search_context_size,
             retry_callback=retry_callback,
         )
 
-        result = json.loads(response.output_text)
-        result = self._validate(context, result)
+        result = self._validate(context, json.loads(response.output_text))
+        web_usage = self._web_search_usage(response)
 
         return {
             "schema_version": DECISION_SCHEMA_VERSION,
@@ -339,6 +363,11 @@ Return only the requested structured result.
             "reasoning_effort": reasoning_effort,
             "run_type": str(run_type).upper(),
             "candidate_count": len(candidates),
+            "decision_web_research": {
+                "enabled": web_search_enabled,
+                "search_context_size": search_context_size if web_search_enabled else None,
+                **web_usage,
+            },
             "context": context,
             "decision": result,
             "execution": {
