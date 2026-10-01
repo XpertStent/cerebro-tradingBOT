@@ -4,6 +4,8 @@ from types import MethodType
 from app.services.activity import activity
 from app.services.ai_memory import ai_memory
 from app.services.ai_thesis_store import ai_theses
+from app.services.risk import risk
+from app.services.settings import settings
 from app.services.trading import trading
 
 
@@ -37,9 +39,51 @@ def install_live_ai_execution(ai_execution):
             raise RuntimeError("Proposal does not contain a broker-order action")
 
         decision_id = proposal.get("decision_id")
-        order, fresh_risk = self._fresh_execution_order(proposal)
-        ai_memory.set_execution_result(decision_id, status="APPROVED")
+        order, _ = self._fresh_execution_order(proposal)
 
+        # The mature execution service already refreshes price/account state and
+        # performs risk checks. Re-run the expanded LIVE-aware guard here with
+        # the full broker account fields (including available funds, sellable
+        # quantity and broker-reported realized P&L) immediately before submit.
+        account_summary = trading.get_account_summary(refresh=True)
+        positions = trading.get_positions(refresh=True)
+        position = next(
+            (
+                item for item in positions
+                if str(item.get("symbol") or "").upper() == str(order["symbol"]).upper()
+            ),
+            None,
+        )
+        fresh_risk = risk.evaluate_order(
+            trading_enabled=settings.get_bool("trading.enabled"),
+            mode=trading.mode(),
+            symbol=order["symbol"],
+            side=order["side"],
+            quantity=order["quantity"],
+            estimated_price=order["estimated_price"],
+            portfolio_total=float(account_summary.get("total_value") or 0),
+            portfolio_cash=float(account_summary.get("cash") or 0),
+            portfolio_available_cash=float(
+                account_summary.get("available_cash")
+                if account_summary.get("available_cash") is not None
+                else account_summary.get("cash") or 0
+            ),
+            portfolio_market_value=float(account_summary.get("market_value") or 0),
+            current_position_value=float((position or {}).get("market_value") or 0),
+            current_position_qty=float((position or {}).get("quantity") or 0),
+            available_position_qty=float((position or {}).get("available_quantity") or 0),
+            median_turnover_60d=proposal.get("median_turnover_60d"),
+            realized_pnl=account_summary.get("realized_pnl"),
+        )
+        if not fresh_risk.get("approved"):
+            failed = [
+                check.get("message")
+                for check in fresh_risk.get("risk_checks") or []
+                if not check.get("passed")
+            ]
+            raise RuntimeError("Final account-aware risk check blocked execution: " + "; ".join(failed))
+
+        ai_memory.set_execution_result(decision_id, status="APPROVED")
         mode = trading.mode().upper()
         account = trading.current_account(refresh=True)
         broker = trading.place_order(
@@ -90,7 +134,7 @@ def install_live_ai_execution(ai_execution):
         result["risk"] = fresh_risk
         result["broker_order"] = broker
         result["execution_environment"] = mode
-        result["message"] = f"{mode} order submitted after fresh risk validation"
+        result["message"] = f"{mode} order submitted after fresh account-aware risk validation"
         return result
 
     ai_execution.build = MethodType(build_with_environment, ai_execution)
