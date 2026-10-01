@@ -353,6 +353,60 @@ main,
   }
 }
 
+/* Base style.css intentionally collapses the two-column shell at tablet width.
+   Keep navigation available as a horizontal, scrollable app bar instead of
+   hiding the sidebar completely. */
+@media (max-width: 900px) {
+  .app {
+    display: block;
+  }
+
+  .sidebar {
+    display: flex !important;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    width: 100%;
+    padding: 10px 12px;
+    gap: 8px;
+    border-bottom: 1px solid #273244;
+  }
+
+  .sidebar .brand {
+    padding: 2px 6px 8px;
+  }
+
+  .sidebar .brand span,
+  .sidebarStatus {
+    display: none;
+  }
+
+  .sidebar nav {
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .sidebar nav button {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 42px;
+    white-space: nowrap;
+  }
+
+  main {
+    padding: 20px 18px 28px;
+  }
+
+  header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+}
+
 @media (max-width: 640px) {
   .watchlistSearchBar > button,
   .activityToolbar > button,
@@ -374,5 +428,24 @@ main,
 
   .activityEventDetails {
     margin-left: 0;
+  }
+
+  main {
+    padding: 16px 12px 24px;
+  }
+
+  header {
+    flex-direction: column;
+    margin-bottom: 18px;
+  }
+
+  header h1 {
+    font-size: 24px;
+  }
+
+  .statusGrid,
+  .metricGrid,
+  .lowerGrid {
+    grid-template-columns: 1fr;
   }
 }
