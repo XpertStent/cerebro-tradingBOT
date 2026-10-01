@@ -48,7 +48,8 @@ main,
   cursor: pointer;
 }
 
-.scrollRegion {
+.scrollRegion,
+.ordersScrollable {
   max-height: min(62vh, 720px);
   overflow: auto;
   overscroll-behavior: contain;
@@ -196,6 +197,20 @@ main,
   color: #b91c1c;
 }
 
+.watchlistRow {
+  grid-template-columns: minmax(150px, 1.15fr) minmax(130px, .75fr) minmax(120px, .8fr) minmax(220px, 1.65fr) auto !important;
+  align-items: center;
+}
+
+.symbolCellButton {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
 .watchlistQuote {
   min-width: 132px;
   text-align: right;
@@ -235,8 +250,27 @@ main,
   min-width: 220px;
 }
 
+.activityEventClickable {
+  cursor: pointer;
+}
+
+.activityEventClickable > summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  list-style: none;
+}
+
+.activityEventClickable > summary::-webkit-details-marker {
+  display: none;
+}
+
+.activityEventClickable[open] {
+  background: #fbfdff;
+}
+
 .activityEventDetails {
-  margin-top: 11px;
+  margin: 11px 0 0 22px;
   padding: 12px;
   background: #f8fafc;
   border: 1px solid #e7edf4;
@@ -282,18 +316,6 @@ main,
   font-size: 12px;
 }
 
-.activityEventClickable {
-  cursor: pointer;
-}
-
-.activityEventClickable summary {
-  list-style: none;
-}
-
-.activityEventClickable summary::-webkit-details-marker {
-  display: none;
-}
-
 .activityDeepLinks {
   display: flex;
   gap: 8px;
@@ -308,16 +330,21 @@ main,
 }
 
 .tableScroll,
-.aiQuantTableWrap {
+.aiQuantTableWrap,
+.ordersTableWrap {
   width: 100%;
   overflow-x: auto;
   overscroll-behavior: contain;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1050px) {
   .watchlistRow {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto !important;
     gap: 10px;
+  }
+
+  .watchlistQuote {
+    text-align: right;
   }
 
   .watchlistReason,
@@ -343,5 +370,9 @@ main,
 
   .watchlistQuote {
     text-align: left;
+  }
+
+  .activityEventDetails {
+    margin-left: 0;
   }
 }
