@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -7,6 +9,7 @@ from app.services.trading import trading
 
 
 router = APIRouter(prefix="/trading", tags=["Trading"])
+_MD5_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 class UnlockRequest(BaseModel):
@@ -20,6 +23,7 @@ class SelectAccountRequest(BaseModel):
 def _status(refresh=False):
     status = trading.trading_status(refresh=refresh)
     status["unlock_hash_configured"] = bool(configured_unlock_hash())
+    status["interactive_unlock_supported"] = True
     return status
 
 
@@ -39,6 +43,7 @@ def trading_accounts():
             "unlocked": status.get("unlocked"),
             "ready": status.get("ready"),
             "unlock_hash_configured": status.get("unlock_hash_configured"),
+            "interactive_unlock_supported": status.get("interactive_unlock_supported"),
             "error": status.get("error"),
         }
     except Exception as exc:
@@ -61,11 +66,16 @@ def select_account(payload: SelectAccountRequest):
 @router.post("/unlock")
 def unlock_trade(payload: UnlockRequest | None = None):
     try:
-        password_md5 = (payload.password_md5 if payload else None) or configured_unlock_hash()
+        supplied_hash = (payload.password_md5 if payload else None)
+        password_md5 = str(supplied_hash or configured_unlock_hash() or "").strip().lower()
+
         if not password_md5:
             raise ValueError(
-                "No server-side live unlock hash is configured. Set MOOMOO_TRADING_PASSWORD_MD5 on the Cerebro container and redeploy."
+                "Enter your Moomoo trading password in the unlock dialog, or configure MOOMOO_TRADING_PASSWORD_MD5 on the Cerebro container."
             )
+        if not _MD5_RE.fullmatch(password_md5):
+            raise ValueError("Trading password hash must be a 32-character lowercase MD5 value")
+
         result = trading.unlock_trade(password_md5=password_md5)
         return {
             **result,
@@ -79,6 +89,7 @@ def unlock_trade(payload: UnlockRequest | None = None):
             action="LIVE_TRADING_UNLOCK_FAILED",
             message="Live trading unlock failed",
             level="ERROR",
+            # Never log the supplied password hash. It is a reusable credential.
             details={"error": str(exc)},
         )
         raise HTTPException(status_code=403, detail=str(exc)) from exc
