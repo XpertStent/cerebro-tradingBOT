@@ -134,12 +134,9 @@ main,
 }
 
 .watchlistResults {
-  position: absolute;
-  z-index: 25;
-  left: 0;
-  right: 0;
-  top: calc(100% + 6px);
-  max-height: 360px;
+  position: relative;
+  margin-top: 6px;
+  max-height: min(360px, 45vh);
   overflow: auto;
   overscroll-behavior: auto;
   border: 1px solid #dce3ec;
@@ -369,3 +366,8 @@ main,
   .metricGrid,
   .lowerGrid { grid-template-columns: 1fr; }
 }
+
+.watchlistMarketFilter { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #475569; font-size: 13px; }
+.watchlistMarketFilter select { background: #fff; border: 1px solid #dce3ec; border-radius: 8px; padding: 7px 10px; color: #172033; }
+
+.watchlistSearchBar { align-items: flex-start; }

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import CollapsibleSection from "./CollapsibleSection";
+import useSymbolSearch from "./useSymbolSearch";
 import { brokerAction } from "./TradingControls";
 import "./OrdersEnhancements.css";
 import "./LiveTrading.css";
@@ -47,7 +48,8 @@ function detailMessage(data, fallback) {
 
 export default function Orders() {
   const [symbolSearch, setSymbolSearch] = useState("");
-  const [suggestions, setSuggestions] = useState([]);
+  const symbolLookup = useSymbolSearch(["US"], 8, 1);
+  const suggestions = symbolLookup.results;
   const [symbol, setSymbol] = useState(null);
   const [side, setSide] = useState("BUY");
   const [quantity, setQuantity] = useState("");
@@ -118,28 +120,10 @@ export default function Orders() {
     }
   }
 
-  async function searchSymbols(value) {
-    const q = value.trim();
-    if (!q) {
-      setSuggestions([]);
-      return;
-    }
-    try {
-      const r = await fetch(
-        `/api/market/search?q=${encodeURIComponent(q)}&markets=US&limit=8`,
-        { cache: "no-store" }
-      );
-      const d = await r.json();
-      if (r.ok) setSuggestions(d.results || []);
-    } catch (_) {
-      setSuggestions([]);
-    }
-  }
-
   function chooseSymbol(item) {
     setSymbol(item.symbol);
     setSymbolSearch(`${item.ticker} — ${item.name}`);
-    setSuggestions([]);
+    symbolLookup.clear();
     setPreview(null);
     setMessage(null);
   }
@@ -289,17 +273,18 @@ export default function Orders() {
               setPreview(null);
               setMessage(null);
               if (!value.trim()) {
-                setSuggestions([]);
+                symbolLookup.clear();
                 return;
               }
-              clearTimeout(window.__orderSearchTimer);
-              window.__orderSearchTimer = setTimeout(() => searchSymbols(value), 200);
+              symbolLookup.schedule(value);
             }}
-            onFocus={() => { if (symbolSearch.trim()) searchSymbols(symbolSearch); }}
+            onFocus={() => { if (!symbol && symbolSearch.trim()) symbolLookup.run(symbolSearch); }}
             placeholder="Search ticker or company"
           />
         </div>
 
+        {symbolLookup.searching && <small role="status">Searching symbols…</small>}
+        {symbolLookup.error && <small className="orderMessage error">{symbolLookup.error}</small>}
         {suggestions.length > 0 && (
           <div className="orderSuggestions">
             {suggestions.map(item => (

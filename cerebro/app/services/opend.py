@@ -8,6 +8,7 @@ from moomoo import (
 )
 
 from app.config import config
+from app.services.symbol_catalog import SymbolCatalogCache
 
 import math
 from datetime import datetime, timedelta
@@ -35,6 +36,7 @@ class OpenDClient:
         self.host = host
         self.port = port
         self.default_market = default_market
+        self._symbol_catalog = SymbolCatalogCache()
 
     def _context(self):
         return OpenQuoteContext(
@@ -441,141 +443,67 @@ class OpenDClient:
             ctx.close()
 
 
-    def search_symbols(
-        self,
-        query: str,
-        markets: list[str] | None = None,
-        limit: int = 20
-    ):
-        query = query.strip().lower()
+    def _load_symbol_catalog(self, market_id, market_enum, security_type):
+        ctx = self._context()
+        try:
+            ret, data = ctx.get_stock_basicinfo(market_enum, security_type)
+            if ret != RET_OK:
+                raise RuntimeError(str(data))
+            entries = []
+            for row in data.to_dict("records"):
+                code = str(row.get("code") or "")
+                if not code:
+                    continue
+                ticker = code.split(".", 1)[-1]
+                name = str(row.get("name") or "")
+                entries.append({"symbol": code, "ticker": ticker, "name": name,
+                                "market": market_id, "security_type": str(security_type),
+                                "_ticker": ticker.lower(), "_name": name.lower()})
+            return entries
+        finally:
+            ctx.close()
 
+    def search_symbols(self, query: str, markets: list[str] | None = None, limit: int = 20):
+        query = query.strip().lower()
+        if not query:
+            return []
+        market_map = {"US": Market.US, "HK": Market.HK, "SH": Market.SH, "SZ": Market.SZ,
+                      "SG": Market.SG, "MY": Market.MY, "JP": Market.JP}
+        selected = list(dict.fromkeys(m.upper() for m in (markets or market_map) if m.upper() in market_map))
+        prefix, separator, remainder = query.partition(".")
+        if separator and prefix.upper() in market_map:
+            selected = [m for m in selected if m == prefix.upper()]
+            query = remainder
         if not query:
             return []
 
-        market_map = {
-            "US": Market.US,
-            "HK": Market.HK,
-            "SH": Market.SH,
-            "SZ": Market.SZ,
-            "SG": Market.SG,
-            "MY": Market.MY,
-            "JP": Market.JP,
-        }
-
-        if not markets:
-            markets = list(market_map.keys())
-
-        selected = [
-            m.upper()
-            for m in markets
-            if m.upper() in market_map
-        ]
-
-        ctx = self._context()
-
-        try:
-            matches = []
-
-            for market_id in selected:
-
-                market_enum = market_map[market_id]
-
-                # Search both equities and ETFs where supported.
-                security_types = [
-                    SecurityType.STOCK,
-                    SecurityType.ETF
-                ]
-
-                for security_type in security_types:
-
-                    try:
-                        ret, data = ctx.get_stock_basicinfo(
-                            market_enum,
-                            security_type
-                        )
-
-                        if ret != RET_OK:
-                            continue
-
-                    except Exception:
-                        # Some market/security-type combinations
-                        # are not supported by OpenD.
-                        continue
-
-                    for _, row in data.iterrows():
-
-                        code = str(row.get("code", ""))
-                        name = str(row.get("name", ""))
-
-                        if not code:
-                            continue
-
-                        ticker = code.split(".")[-1]
-
-                        q = query
-                        ticker_lower = ticker.lower()
-                        name_lower = name.lower()
-
-                        score = None
-
-                        if ticker_lower == q:
-                            score = 0
-                        elif name_lower == q:
-                            score = 1
-                        elif ticker_lower.startswith(q):
-                            score = 2
-                        elif name_lower.startswith(q):
-                            score = 3
-                        elif q in ticker_lower:
-                            score = 4
-                        elif q in name_lower:
-                            score = 5
-
-                        if score is None:
-                            continue
-
-                        matches.append({
-                            "symbol": code,
-                            "ticker": ticker,
-                            "name": name,
-                            "market": market_id,
-                            "security_type": str(security_type),
-                            "_score": score
-                        })
-
-            # Remove duplicates
-            unique = {}
-
-            for item in matches:
-                key = item["symbol"]
-
-                if (
-                    key not in unique
-                    or item["_score"] < unique[key]["_score"]
-                ):
-                    unique[key] = item
-
-            matches = list(unique.values())
-
-            matches.sort(
-                key=lambda x: (
-                    x["_score"],
-                    x["market"],
-                    len(x["ticker"]),
-                    x["ticker"]
-                )
-            )
-
-            results = []
-
-            for item in matches[:limit]:
-                item.pop("_score", None)
-                results.append(item)
-
-            return results
-
-        finally:
-            ctx.close()
+        matches = {}
+        loaded = 0
+        for market_id in selected:
+            for security_type in (SecurityType.STOCK, SecurityType.ETF):
+                try:
+                    catalog = self._symbol_catalog.get(
+                        (market_id, str(security_type)),
+                        lambda: self._load_symbol_catalog(market_id, market_map[market_id], security_type))
+                except Exception:
+                    # Unsupported combinations are retried after a short backoff.
+                    continue
+                loaded += 1
+                for item in catalog:
+                    ticker, name = item['_ticker'], item['_name']
+                    if ticker == query: score = 0
+                    elif name == query: score = 1
+                    elif ticker.startswith(query): score = 2
+                    elif name.startswith(query): score = 3
+                    elif query in ticker: score = 4
+                    elif query in name: score = 5
+                    else: continue
+                    if item['symbol'] not in matches or score < matches[item['symbol']]['_score']:
+                        matches[item['symbol']] = {**item, '_score': score}
+        if selected and not loaded:
+            raise RuntimeError("OpenD symbol catalog is unavailable; retry shortly")
+        ordered = sorted(matches.values(), key=lambda item: (item['_score'], item['market'], len(item['ticker']), item['ticker']))
+        return [{key: value for key, value in item.items() if not key.startswith('_')} for item in ordered[:limit]]
 
 
 opend = OpenDClient(

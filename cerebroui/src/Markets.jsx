@@ -1,4 +1,5 @@
 import { mergeCandles, prependedCount } from "./candleData";
+import useSymbolSearch from "./useSymbolSearch";
 import React, {
   useEffect,
   useRef,
@@ -136,11 +137,8 @@ export default function Markets() {
   const [showMarketFilter, setShowMarketFilter] =
     useState(false);
 
-  const [suggestions, setSuggestions] =
-    useState([]);
-
-  const [searching, setSearching] =
-    useState(false);
+  const symbolLookup = useSymbolSearch(selectedMarkets, 20, 1);
+  const { results: suggestions, searching } = symbolLookup;
 
   const [timeframe, setTimeframe] =
     useState("1d");
@@ -156,53 +154,6 @@ export default function Markets() {
 
   const [error, setError] =
     useState(null);
-
-
-  async function runSearch(value) {
-
-    const q = value.trim();
-
-    if (!q) {
-      setSuggestions([]);
-      return;
-    }
-
-    if (!selectedMarkets.length) {
-      setSuggestions([]);
-      return;
-    }
-
-    setSearching(true);
-
-    try {
-
-      const marketParam =
-        selectedMarkets.join(",");
-
-      const r = await fetch(
-        `/api/market/search?q=${encodeURIComponent(q)}&markets=${encodeURIComponent(marketParam)}&limit=20`,
-        { cache: "no-store" }
-      );
-
-      if (!r.ok)
-        throw new Error("Search failed");
-
-      const d =
-        await r.json();
-
-      setSuggestions(
-        d.results || []
-      );
-
-    } catch (_) {
-
-      setSuggestions([]);
-
-    } finally {
-
-      setSearching(false);
-    }
-  }
 
 
   const chartRequestId = useRef(0);
@@ -306,7 +257,7 @@ export default function Markets() {
 
     setSymbol(item.symbol);
 
-    setSuggestions([]);
+    symbolLookup.clear();
     setShowMarketFilter(false);
 
     setQuote(null);
@@ -321,7 +272,7 @@ export default function Markets() {
     setSymbol(null);
     setQuote(null);
     setCandles([]);
-    setSuggestions([]);
+    symbolLookup.clear();
     setError(null);
   }
 
@@ -356,7 +307,7 @@ export default function Markets() {
       return;
     }
 
-    runSearch(search);
+    symbolLookup.run(search);
   }
 
 
@@ -499,15 +450,7 @@ export default function Markets() {
 
               setSearch(value);
 
-              clearTimeout(
-                window.__cerebroSearchTimer
-              );
-
-              window.__cerebroSearchTimer =
-                setTimeout(
-                  () => runSearch(value),
-                  250
-                );
+              symbolLookup.schedule(value);
             }}
             placeholder="Search ticker or company name"
           />

@@ -149,6 +149,15 @@ def start_broker_history_refresh():
     _history_thread = threading.Thread(target=refresh, name="broker-history", daemon=True)
     _history_thread.start()
 
+    def warm_symbol_catalog():
+        try:
+            # Load the catalog using a small query; results are discarded.
+            opend.search_symbols("a", markets=["US"], limit=1)
+        except Exception:
+            logging.getLogger(__name__).warning("OpenD symbol catalog warmup unavailable")
+
+    threading.Thread(target=warm_symbol_catalog, name="symbol-catalog", daemon=True).start()
+
 
 @app.on_event("shutdown")
 def stop_broker_history_refresh():

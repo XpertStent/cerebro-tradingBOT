@@ -23,7 +23,8 @@ def _cached_search(query, markets, limit):
 
     result = opend.search_symbols(query, markets=markets, limit=limit)
     with _search_cache_lock:
-        _search_cache[key] = (now, result)
+        if result:
+            _search_cache[key] = (time.monotonic(), result)
         if len(_search_cache) > _SEARCH_CACHE_MAX:
             oldest = sorted(_search_cache.items(), key=lambda item: item[1][0])
             for stale_key, _ in oldest[: len(_search_cache) - _SEARCH_CACHE_MAX]:
