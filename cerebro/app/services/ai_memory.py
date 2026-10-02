@@ -110,6 +110,8 @@ class AIMemoryStore:
                 )
             """)
 
+            conn.execute("UPDATE ai_decisions SET rejection_code='CURRENT_SET_RISK_POLICY_BLOCKED' WHERE rejection_code='RISK_BLOCKED'")
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS ai_theses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -307,6 +309,10 @@ class AIMemoryStore:
 
         return self.get_decision(decision_id)
 
+    def set_thesis_status(self, decision_id, status):
+        with _lock, self._connect() as conn:
+            conn.execute("UPDATE ai_decisions SET thesis_status=? WHERE id=?", (status, decision_id))
+
     def set_execution_result(
         self,
         decision_id,
@@ -318,6 +324,8 @@ class AIMemoryStore:
         order_id=None
     ):
         status = status.upper()
+        if rejection_code == "RISK_BLOCKED":
+            rejection_code = "CURRENT_SET_RISK_POLICY_BLOCKED"
 
         if status not in VALID_EXECUTION_STATUSES:
             raise ValueError(

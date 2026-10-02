@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.services.live_trading_hardening import EXECUTION_LOCK
+from app.services.order_ticket import validate_ticket
 from app.services.activity import activity
 from app.services.live_safety import live_safety
 from app.services.opend import opend
@@ -18,7 +19,10 @@ class OrderRequest(BaseModel):
     side: str
     quantity: float = Field(gt=0)
     order_type: str = "MARKET"
-    price: float | None = None
+    price: float | None = Field(None, gt=0)
+    trigger_price: float | None = Field(None, gt=0)
+    time_in_force: str = "DAY"
+    preview_context_id: str | None = None
 
     # Passed back from a manual preview. These values let execution bind
     # itself to the preview context and make a retry idempotent.
@@ -57,6 +61,35 @@ def orders(refresh: bool = Query(False)):
                 "orders": data,
                 "history": trading._order_history_status,
             }
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/ticket")
+def order_ticket_info(symbol: str, side: str = "BUY", order_type: str = "MARKET",
+                      price: float | None = None, trigger_price: float | None = None,
+                      time_in_force: str = "DAY"):
+    try:
+        with EXECUTION_LOCK:
+            if trading.mode() != "live":
+                raise ValueError("Broker quantity estimates are available only in LIVE mode")
+            code = symbol.strip().upper()
+            if "." not in code:
+                code = f"US.{code}"
+            if not code.startswith("US."):
+                raise ValueError("Cerebro execution is restricted to US securities")
+            validate_ticket(mode="LIVE", side=side, order_type=order_type, price=price,
+                            trigger_price=trigger_price, time_in_force=time_in_force)
+            quote = opend.get_snapshot(code)
+            ticket = validate_ticket(mode="LIVE", side=side, order_type=order_type, price=price,
+                                     trigger_price=trigger_price, time_in_force=time_in_force, market_price=quote["price"])
+            maximum = trading.max_tradable_quantity(symbol=code, side=side, order_type=order_type,
+                                                    price=ticket["estimated_price"])
+            return {"symbol": code, "mode": "LIVE", "quote_price": quote["price"],
+                    "maximum": maximum, "ticket": ticket,
+                    "execution_context": trading.current_execution_context(refresh=True)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -111,7 +144,7 @@ def cancel_pending_order(order_id: str):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-def build_preview(order: OrderRequest):
+def _build_preview(order: OrderRequest):
     side = order.side.upper()
     order_type = order.order_type.upper()
 
@@ -126,15 +159,16 @@ def build_preview(order: OrderRequest):
 
     if side not in ("BUY", "SELL"):
         raise HTTPException(status_code=400, detail="side must be BUY or SELL")
-    if order_type not in ("MARKET", "LIMIT"):
-        raise HTTPException(status_code=400, detail="order_type must be MARKET or LIMIT")
-    if order_type == "LIMIT" and order.price is None:
-        raise HTTPException(status_code=400, detail="LIMIT order requires price")
-    if abs(float(order.quantity) - round(float(order.quantity))) > 1e-9:
-        raise HTTPException(status_code=400, detail="Cerebro currently supports whole-share orders only")
-
-    quote = opend.get_snapshot(symbol)
-    estimated_price = float(order.price) if order_type == "LIMIT" else float(quote["price"])
+    try:
+        validate_ticket(mode=trading.mode(), side=side, order_type=order_type, price=order.price,
+                        trigger_price=order.trigger_price, time_in_force=order.time_in_force, quantity=order.quantity)
+        quote = opend.get_snapshot(symbol)
+        ticket = validate_ticket(mode=trading.mode(), side=side, order_type=order_type, price=order.price,
+                                 trigger_price=order.trigger_price, time_in_force=order.time_in_force,
+                                 quantity=order.quantity, market_price=quote["price"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    estimated_price = ticket["estimated_price"]
 
     account = trading.get_account_summary(refresh=True)
     positions = trading.get_positions(refresh=True)
@@ -166,7 +200,7 @@ def build_preview(order: OrderRequest):
         current_position_qty=float((position or {}).get("quantity") or 0),
         available_position_qty=float((position or {}).get("available_quantity") or 0),
         realized_pnl=account.get("realized_pnl"),
-            daily_equity_pnl=account.get("daily_pnl"),
+        daily_equity_pnl=account.get("daily_pnl"),
     )
 
     mode = trading.mode().upper()
@@ -207,9 +241,14 @@ def build_preview(order: OrderRequest):
             }
 
         result = live_safety.apply_checks(result, [broker_check])
+        result["broker_maximum"] = broker_max if "broker_max" in locals() else None
 
     result["order_type"] = order_type
-    result["requested_price"] = order.price
+    result["requested_price"] = ticket["price"]
+    result["trigger_price"] = ticket["trigger_price"]
+    result["time_in_force"] = ticket["time_in_force"]
+    result["quote_price"] = quote["price"]
+    result["session"] = "REGULAR"
 
     execution_context = trading.current_execution_context(refresh=True)
     result["execution_context_id"] = execution_context["context_id"]
@@ -223,6 +262,11 @@ def build_preview(order: OrderRequest):
         "available_cash": account.get("available_cash"),
     }
     return result
+
+
+def build_preview(order: OrderRequest):
+    with EXECUTION_LOCK:
+        return _build_preview(order)
 
 
 @router.post("/preview")
@@ -246,7 +290,7 @@ def preview_order(order: OrderRequest):
         )
         activity.write(
             category="RISK",
-            action="RISK_APPROVED" if result["approved"] else "RISK_BLOCKED",
+            action="RISK_APPROVED" if result["approved"] else "CURRENT_SET_RISK_POLICY_BLOCKED",
             level="INFO" if result["approved"] else "WARN",
             message=(
                 f"{result['mode']} order approved by risk engine"
@@ -272,12 +316,13 @@ def preview_order(order: OrderRequest):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/execute")
-def execute_order(order: OrderRequest):
+def _execute_order(order: OrderRequest):
     try:
         # Execution always performs a fresh preview/risk pass. A direct API call
         # therefore cannot bypass account, session, cooldown or risk validation.
         preview = build_preview(order)
+        if order.preview_context_id and order.preview_context_id != preview["execution_context_id"]:
+            raise HTTPException(status_code=409, detail="Account/environment changed since preview; preview again")
         if not preview["approved"]:
             raise HTTPException(
                 status_code=403,
@@ -313,6 +358,8 @@ def execute_order(order: OrderRequest):
             quantity=preview["quantity"],
             order_type=preview["order_type"],
             price=order.price,
+            trigger_price=order.trigger_price,
+            time_in_force=order.time_in_force,
             expected_context_id=preview["execution_context_id"],
             intent_id=order.execution_intent_id,
             source="MANUAL",
@@ -337,6 +384,9 @@ def execute_order(order: OrderRequest):
                 "side": preview.get("side"),
                 "estimated_value": preview.get("estimated_value"),
                 "broker_status": result.get("status"),
+                "order_type": preview["order_type"],
+                "trigger_price": preview.get("trigger_price"),
+                "time_in_force": preview.get("time_in_force"),
                 "risk_checks": preview.get("risk_checks"),
             },
         )
@@ -377,3 +427,9 @@ def execute_order(order: OrderRequest):
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/execute")
+def execute_order(order: OrderRequest):
+    with EXECUTION_LOCK:
+        return _execute_order(order)

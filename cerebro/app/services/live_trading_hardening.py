@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import threading
 import uuid
@@ -6,8 +7,9 @@ from pathlib import Path
 from types import MethodType
 from zoneinfo import ZoneInfo
 
-from moomoo import Currency, ModifyOrderOp, OrderType, RET_OK, TrdEnv, TrdMarket, TrdSide
+from moomoo import Currency, ModifyOrderOp, OrderType, RET_OK, TimeInForce, TrdEnv, TrdMarket, TrdSide
 
+from app.services.order_ticket import ORDER_TYPES, LIMIT_TYPES, validate_ticket
 from app.services.broker_history import broker_history
 from app.services.broker_identity import broker_id
 from app.services.account_fields import securities_funds, position_pnl
@@ -116,6 +118,17 @@ class LiveTradingHardening:
             "baseline_created_at": created_at,
             "method": "ACCOUNT_EQUITY_CHANGE",
         }
+
+    def bind_ticket(self, intent_id, ticket):
+        encoded = json.dumps(ticket, sort_keys=True, separators=(",", ":"))
+        with self._connect() as conn:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(execution_intents)")}
+            if "ticket_json" not in columns:
+                conn.execute("ALTER TABLE execution_intents ADD COLUMN ticket_json TEXT")
+            existing = conn.execute("SELECT ticket_json FROM execution_intents WHERE intent_id=?", (intent_id,)).fetchone()
+            if existing and existing["ticket_json"] and existing["ticket_json"] != encoded:
+                raise RuntimeError("Execution intent belongs to a different order ticket; preview again")
+            conn.execute("UPDATE execution_intents SET ticket_json=? WHERE intent_id=?", (encoded, intent_id))
 
     def get_intent(self, intent_id: str):
         with self._connect() as conn:
@@ -242,6 +255,8 @@ def install_hardened_trading(trading):
             "name": self._clean(row.get("stock_name")),
             "side": self._enum_text(row.get("trd_side")),
             "order_type": self._enum_text(row.get("order_type")),
+            "trigger_price": self._clean(row.get("aux_price")),
+            "time_in_force": self._enum_text(row.get("time_in_force")),
             "status": self._enum_text(row.get("order_status")),
             "quantity": self._clean(row.get("qty")),
             "price": self._clean(row.get("price")),
@@ -325,7 +340,9 @@ def install_hardened_trading(trading):
         account = account or self.current_account(refresh=True)
         firm = account.get("security_firm") or "FUTUINC"
         env = environment or self.environment()
-        broker_order_type = OrderType.MARKET if str(order_type).upper() == "MARKET" else OrderType.NORMAL
+        # OpenD's sizing query has no aux_price; size conditional tickets at
+        # the conservative reference with the equivalent market/limit type.
+        broker_order_type = OrderType.NORMAL if str(order_type).upper() in LIMIT_TYPES else OrderType.MARKET
         px = float(price or 0)
         if px <= 0:
             raise RuntimeError("A positive reference price is required for broker max-quantity validation")
@@ -367,6 +384,8 @@ def install_hardened_trading(trading):
         intent_id: str | None = None,
         source: str = "MANUAL",
         reference_price: float | None = None,
+        trigger_price: float | None = None,
+        time_in_force: str = "DAY",
     ):
         side = str(side).upper()
         order_type = str(order_type).upper()
@@ -375,14 +394,21 @@ def install_hardened_trading(trading):
             raise RuntimeError("Cerebro execution is restricted to US securities")
         if side not in {"BUY", "SELL"}:
             raise ValueError("side must be BUY or SELL")
-        if order_type not in {"MARKET", "LIMIT"}:
-            raise ValueError("order_type must be MARKET or LIMIT")
-        if order_type == "LIMIT" and price is None:
-            raise ValueError("LIMIT order requires price")
 
         intent_id = str(intent_id or uuid.uuid4().hex)
         with EXECUTION_LOCK:
             mode = self.mode().upper()
+            ticket = validate_ticket(mode=mode, side=side, order_type=order_type, price=price,
+                                     trigger_price=trigger_price, time_in_force=time_in_force, quantity=quantity)
+            if order_type in {"STOP", "STOP_LIMIT"}:
+                from app.services.opend import opend
+                quote = opend.get_snapshot(symbol)
+                ticket = validate_ticket(mode=mode, side=side, order_type=order_type, price=price,
+                                         trigger_price=trigger_price, time_in_force=time_in_force,
+                                         quantity=quantity, market_price=quote["price"])
+                from app.services.live_safety import live_safety
+                if not live_safety.quote_freshness_check(mode=mode, snapshot=quote)["passed"]:
+                    raise RuntimeError("A fresh quote is required to validate the stop trigger")
             account = self.current_account(refresh=True)
             context = build_execution_context(mode=mode, account=account)
             if expected_context_id and context["context_id"] != str(expected_context_id):
@@ -394,6 +420,9 @@ def install_hardened_trading(trading):
             broker_remark = (remark or f"CEREBRO:{source}:{intent_id}")[:64]
             existing = hardening.get_intent(intent_id)
             if existing:
+                if (existing["symbol"], existing["side"], float(existing["quantity"])) != (symbol, side, float(quantity)):
+                    raise RuntimeError("Execution intent belongs to a different order ticket; preview again")
+                hardening.bind_ticket(intent_id, {**ticket, "estimated_price": None, "symbol": symbol, "quantity": float(quantity)})
                 if existing["context_id"] != context["context_id"]:
                     raise RuntimeError("EXECUTION_CONTEXT_MISMATCH: intent belongs to another account/environment")
                 broker_existing = self.find_order_by_remark(existing.get("broker_remark") or broker_remark)
@@ -413,9 +442,10 @@ def install_hardened_trading(trading):
                     remark=broker_remark,
                 )
 
+            hardening.bind_ticket(intent_id, {**ticket, "estimated_price": None, "symbol": symbol, "quantity": float(quantity)})
             env = TrdEnv.REAL if mode == "LIVE" else TrdEnv.SIMULATE
             firm = account.get("security_firm") or "FUTUINC"
-            broker_price = float(price) if order_type == "LIMIT" else float(reference_price or 0)
+            broker_price = ticket["estimated_price"] or float(reference_price or 0)
             if mode == "LIVE":
                 maximum = self.max_tradable_quantity(
                     symbol=symbol,
@@ -447,12 +477,16 @@ def install_hardened_trading(trading):
                     "qty": quantity,
                     "code": symbol,
                     "trd_side": TrdSide.BUY if side == "BUY" else TrdSide.SELL,
-                    "order_type": OrderType.MARKET if order_type == "MARKET" else OrderType.NORMAL,
+                    "order_type": getattr(OrderType, ORDER_TYPES[order_type]),
                     "trd_env": env,
                     "acc_id": int(account["account_id"]),
-                    "price": 0 if order_type == "MARKET" else price,
+                    "price": ticket["price"] or 0,
+                    "time_in_force": getattr(TimeInForce, ticket["time_in_force"]),
+                    "fill_outside_rth": False,
                     "remark": broker_remark,
                 }
+                if ticket["trigger_price"] is not None:
+                    kwargs["aux_price"] = ticket["trigger_price"]
                 try:
                     ret, data = ctx.place_order(**kwargs)
                 except Exception as exc:

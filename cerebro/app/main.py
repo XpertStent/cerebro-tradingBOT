@@ -8,6 +8,7 @@ from app.services.opend import opend
 from app.services.settings import settings
 from app.services.trading import trading
 from app.services.ai_execution import ai_execution
+from app.services.ai_thesis_store import ai_theses
 from app.services.ai_run_context import ai_run_context
 from app.services.live_safety import live_safety
 from app.services.live_safety_hardening import install_live_safety_hardening
@@ -34,6 +35,7 @@ NAME = config["cerebro"]["name"]
 install_hardened_trading(trading)
 install_live_safety_hardening(live_safety)
 install_live_ai_execution(ai_execution)
+ai_theses.repair_unapproved_theses()
 install_live_context(ai_run_context)
 
 

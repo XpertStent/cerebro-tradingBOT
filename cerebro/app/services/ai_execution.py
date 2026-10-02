@@ -70,7 +70,7 @@ class AIExecutionService:
             target_allocation_pct=item.get("desired_exposure_pct"),
             short_reason=item.get("reasoning") or "AI portfolio decision",
             what_changed=item.get("what_changed"),
-            thesis_status="ACTIVE" if item.get("thesis_update") else None,
+            thesis_status=None,
             invalidation=item.get("thesis_invalidation"),
             market_context=context.get("market_context"),
             portfolio_context={
@@ -80,17 +80,10 @@ class AIExecutionService:
             signals_snapshot={
                 "quant": candidate.get("quant"),
                 "research_context": candidate.get("research_context"),
+                "proposed_thesis": item.get("thesis_update"),
             },
         )
 
-        if item.get("thesis_update"):
-            ai_theses.replace_active(
-                symbol=item["symbol"],
-                thesis=item["thesis_update"],
-                strategy="AI_PORTFOLIO",
-                invalidation=item.get("thesis_invalidation"),
-                entry_decision_id=record["id"],
-            )
         return record
 
     def _size(self, *, action, target_pct, total_value, current_value,
@@ -322,7 +315,7 @@ class AIExecutionService:
                 proposal["message"] = "Blocked by deterministic risk engine"
                 ai_memory.set_execution_result(
                     record["id"], status="REJECTED",
-                    rejection_code="RISK_BLOCKED",
+                    rejection_code="CURRENT_SET_RISK_POLICY_BLOCKED",
                     rejection_reason=proposal["message"],
                 )
             else:
@@ -406,13 +399,18 @@ class AIExecutionService:
                 raise RuntimeError("Target exposure no longer requires a whole-share order")
 
         order_type = str(settings.get("execution.default_order_type") or "MARKET").upper()
+        reviewed = proposal.get("order") or {}
+        if (reviewed.get("side") != side or float(reviewed.get("quantity") or 0) != quantity
+                or reviewed.get("order_type") != order_type):
+            raise RuntimeError("Order sizing or type changed since review; run a new decision cycle before approving")
+        execution_price = float(reviewed.get("price") or price) if order_type == "LIMIT" else price
         fresh_risk = risk.evaluate_order(
             trading_enabled=settings.get_bool("trading.enabled"),
             mode=str(settings.get("trading.mode")),
             symbol=symbol,
             side=side,
             quantity=quantity,
-            estimated_price=price,
+            estimated_price=execution_price,
             portfolio_total=total_value,
             portfolio_cash=float(account.get("cash") or 0),
             portfolio_available_cash=account.get("available_cash"),
@@ -436,8 +434,8 @@ class AIExecutionService:
             "side": side,
             "quantity": quantity,
             "order_type": order_type,
-            "price": price if order_type == "LIMIT" else None,
-            "estimated_price": price,
+            "price": execution_price if order_type == "LIMIT" else None,
+            "estimated_price": execution_price,
         }, fresh_risk
 
     def _approve_watch(self, proposal):
@@ -492,8 +490,18 @@ class AIExecutionService:
     def approve(self, proposal):
         """Approve one pending AI decision, dispatching by decision type."""
         if str(proposal.get("action") or "").upper() == "WATCH":
-            return self._approve_watch(proposal)
-        return self.execute(proposal)
+            result = self._approve_watch(proposal)
+        else:
+            result = self.execute(proposal)
+        self._activate_approved_thesis(proposal)
+        return result
+
+    def _activate_approved_thesis(self, proposal):
+        if proposal.get("thesis_update") and proposal.get("action") != "SELL":
+            ai_theses.replace_active(symbol=proposal["symbol"], thesis=proposal["thesis_update"],
+                                    strategy="AI_PORTFOLIO", invalidation=proposal.get("thesis_invalidation"),
+                                    entry_decision_id=proposal["decision_id"])
+            ai_memory.set_thesis_status(proposal["decision_id"], "ACTIVE")
 
     def execute(self, proposal):
         if proposal.get("status") not in {"PENDING_APPROVAL", "APPROVED"}:
@@ -558,6 +566,8 @@ class AIExecutionService:
         )
         result = deepcopy(proposal)
         result["status"] = "REJECTED"
+        result["rejection_code"] = "USER_REJECTED"
+        result["rejection_reason"] = reason
         result["message"] = reason
         return result
 

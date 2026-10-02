@@ -23,7 +23,7 @@ jobs:
       - name: Compile Cerebro Python
         run: python -m compileall -q cerebro/app
 
-      - name: Check account funds and candle regressions
+      - name: Check backend regressions
         run: python -m unittest discover -s cerebro/tests -v
 
       - name: Set up Node.js
@@ -37,7 +37,7 @@ jobs:
         working-directory: cerebroui
         run: npm install --no-audit --no-fund
 
-      - name: Check chart backfill regression
+      - name: Check UI regressions
         working-directory: cerebroui
         run: node --test tests/*.test.js
 

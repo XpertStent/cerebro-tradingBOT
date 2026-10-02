@@ -53,6 +53,10 @@ export default function Orders() {
   const [quantity, setQuantity] = useState("");
   const [orderType, setOrderType] = useState("MARKET");
   const [limitPrice, setLimitPrice] = useState("");
+  const [triggerPrice, setTriggerPrice] = useState("");
+  const [timeInForce, setTimeInForce] = useState("DAY");
+  const [ticketInfo, setTicketInfo] = useState(null);
+  const [ticketError, setTicketError] = useState(null);
   const [preview, setPreview] = useState(null);
   const [orders, setOrders] = useState([]);
   const [history, setHistory] = useState(null);
@@ -64,6 +68,8 @@ export default function Orders() {
 
   const mode = String(trading?.mode || preview?.mode || "PAPER").toUpperCase();
   const live = mode === "LIVE";
+  const needsLimit = ["LIMIT", "STOP_LIMIT"].includes(orderType);
+  const needsTrigger = ["STOP", "STOP_LIMIT"].includes(orderType);
 
   async function loadTrading() {
     try {
@@ -139,6 +145,12 @@ export default function Orders() {
   }
 
   function orderPayload({ forExecution = false } = {}) {
+    if (forExecution && preview) return {
+      ...preview.request_ticket,
+      preview_reference_price: Number(preview.estimated_price),
+      execution_intent_id: preview.execution_intent_id,
+      preview_context_id: preview.execution_context_id
+    };
     const payload = {
       symbol,
       side,
@@ -146,29 +158,29 @@ export default function Orders() {
       order_type: orderType
     };
 
-    if (orderType === "LIMIT") payload.price = Number(limitPrice);
-
-    if (forExecution && preview) {
-      payload.preview_reference_price = Number(preview.estimated_price);
-      payload.execution_intent_id = preview.execution_intent_id;
-    }
+    if (needsLimit) payload.price = Number(limitPrice);
+    if (needsTrigger) payload.trigger_price = Number(triggerPrice);
+    payload.time_in_force = live ? timeInForce : "DAY";
 
     return payload;
   }
 
   async function previewOrder() {
     setLoading(true);
+    setPreview(null);
     setMessage(null);
+    const requestTicket = orderPayload();
     try {
       const r = await fetch("/api/orders/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderPayload())
+        body: JSON.stringify(requestTicket)
       });
       const d = await r.json();
       if (!r.ok) throw new Error(detailMessage(d, `Preview failed (${r.status})`));
       setPreview({
         ...d,
+        request_ticket: requestTicket,
         execution_intent_id:
           d.execution_intent_id ||
           (window.crypto?.randomUUID
@@ -189,7 +201,7 @@ export default function Orders() {
     const previewMode = String(preview.mode || mode).toUpperCase();
     if (previewMode === "LIVE") {
       const ok = window.confirm(
-        `Submit a REAL ${preview.side} order for ${preview.quantity} ${preview.symbol}?\n\nEstimated value: ${money(preview.estimated_value)}\nAccount: ${preview.account?.account_id_masked || "LIVE"}\n\nThis uses real funds.`
+        `Submit a REAL ${preview.side} order for ${preview.quantity} ${preview.symbol}?\n\nType: ${preview.order_type} · ${preview.time_in_force}\nTrigger: ${money(preview.trigger_price)} · Limit: ${money(preview.requested_price)}\nEstimated value: ${money(preview.estimated_value)}\nAccount: ${preview.account?.account_id_masked || "LIVE"}\n\nThis uses real funds.`
       );
       if (!ok) return;
     }
@@ -227,8 +239,36 @@ export default function Orders() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    setPreview(null);
+    setTriggerPrice("");
+    setTimeInForce("DAY");
+    setOrderType("MARKET");
+  }, [mode, trading?.account?.account_id]);
+
+  useEffect(() => {
+    setTicketInfo(null);
+    setTicketError(null);
+    if (!live || !symbol || (needsLimit && !limitPrice) || (needsTrigger && !triggerPrice)) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      const params = new URLSearchParams({symbol, side, order_type: orderType, time_in_force: timeInForce});
+      if (needsLimit) params.set("price", limitPrice);
+      if (needsTrigger) params.set("trigger_price", triggerPrice);
+      try {
+        const response = await fetch(`/api/orders/ticket?${params}`, {cache:"no-store", signal:controller.signal});
+        const data = await response.json();
+        if (!response.ok) throw new Error(detailMessage(data, "Unable to verify broker quantity"));
+        if (!controller.signal.aborted) setTicketInfo(data);
+      } catch (error) {
+        if (!controller.signal.aborted) setTicketError(error.message);
+      }
+    }, 400);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [live, symbol, side, orderType, limitPrice, triggerPrice, timeInForce, trading?.account?.account_id]);
+
   const entryPanel = (
-    <>
+    <fieldset className="orderTicketFields" disabled={loading || executing}>
       {live && (
         <div className="liveOrderNotice">
           <ShieldAlert size={18}/>
@@ -285,30 +325,56 @@ export default function Orders() {
       <div className="orderFormGrid">
         <div className="orderField">
           <label>Quantity</label>
-          <input type="number" min="1" step="1" value={quantity} onChange={e => { setQuantity(e.target.value); setPreview(null); }}/>
+          <div className="quantityControls">
+            <button type="button" aria-label="Decrease quantity" onClick={() => {setQuantity(String(Math.max(1, Number(quantity || 1) - 1)));setPreview(null);}}>−</button>
+            <input type="number" min="1" step="1" value={quantity} onChange={e => { setQuantity(e.target.value); setPreview(null); }}/>
+            <button type="button" aria-label="Increase quantity" onClick={() => {setQuantity(String(Number(quantity || 0) + 1));setPreview(null);}}>+</button>
+          </div>
         </div>
         <div className="orderField">
           <label>Order Type</label>
           <select value={orderType} onChange={e => { setOrderType(e.target.value); setPreview(null); }}>
             <option value="MARKET">Market</option>
             <option value="LIMIT">Limit</option>
+            {live && <option value="STOP">Stop</option>}
+            {live && <option value="STOP_LIMIT">Stop Limit</option>}
           </select>
         </div>
       </div>
 
-      {orderType === "LIMIT" && (
+      {needsLimit && (
         <div className="orderField">
           <label>Limit Price</label>
           <input type="number" step="0.01" value={limitPrice} onChange={e => { setLimitPrice(e.target.value); setPreview(null); }} placeholder="Enter limit price"/>
         </div>
       )}
 
-      <button className="previewButton" onClick={previewOrder} disabled={loading || !symbol || !quantity || (orderType === "LIMIT" && !limitPrice)}>
+      {live && needsTrigger && <div className="orderField">
+        <label>Trigger Price</label>
+        <input type="number" min="0.001" step="0.001" value={triggerPrice} onChange={e => {setTriggerPrice(e.target.value);setPreview(null);}} placeholder="Price that activates the order"/>
+        <small>BUY trigger must be above the current price; SELL trigger must be below it.</small>
+      </div>}
+      {live && <div className="orderField">
+        <label>Time-in-Force</label>
+        <select value={timeInForce} onChange={e => {setTimeInForce(e.target.value);setPreview(null);}}>
+          <option value="DAY">Day</option><option value="GTC">Good Till Cancelled</option>
+        </select>
+        <small>Regular-session orders. Stop orders can fill at a different price; stop-limit orders may remain unfilled.</small>
+      </div>}
+      {live && <div className="previewSummary">
+        <PreviewRow label="Current price" value={money(ticketInfo?.quote_price)}/>
+        <PreviewRow label="Estimated amount" value={ticketInfo && quantity ? money(Number(quantity) * ticketInfo.ticket.estimated_price) : "—"}/>
+        <PreviewRow label={side === "BUY" ? "Max quantity to buy (cash)" : "Max quantity to sell"} value={ticketInfo?.maximum?.maximum ?? "—"}/>
+        {ticketError && <p className="orderMessage error">{ticketError}</p>}
+        <small>Cash maximum is estimated by OpenD at the ticket’s reference price and checked again before submission.</small>
+      </div>}
+
+      <button className="previewButton" onClick={previewOrder} disabled={loading || !symbol || !quantity || (needsLimit && !limitPrice) || (needsTrigger && !triggerPrice)}>
         {loading ? "Checking..." : `Preview ${mode} Order`}
       </button>
 
       {message && <div className={`orderMessage ${message.type}`}>{message.text}</div>}
-    </>
+    </fieldset>
   );
 
   const riskPanel = !preview ? (
@@ -332,6 +398,10 @@ export default function Orders() {
       <div className="previewSummary">
         <PreviewRow label="Security" value={preview.symbol}/>
         <PreviewRow label="Side" value={preview.side}/>
+        <PreviewRow label="Order type" value={preview.order_type}/>
+        <PreviewRow label="Time-in-force" value={preview.time_in_force}/>
+        <PreviewRow label="Trigger price" value={money(preview.trigger_price)}/>
+        <PreviewRow label="Limit price" value={money(preview.requested_price)}/>
         <PreviewRow label="Quantity" value={preview.quantity}/>
         <PreviewRow label="Estimated Price" value={money(preview.estimated_price)}/>
         <PreviewRow label="Estimated Value" value={money(preview.estimated_value)}/>
@@ -381,12 +451,12 @@ export default function Orders() {
           <table className="ordersTable">
             <thead>
               <tr>
-                <th>Date (New York)</th><th>Account</th><th>Env</th><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Filled</th><th>Avg Fill</th><th>Status</th><th>Order ID</th><th>Action</th>
+                <th>Date (New York)</th><th>Account</th><th>Env</th><th>Symbol</th><th>Side</th><th>Type</th><th>Trigger</th><th>Limit</th><th>Expiry</th><th>Qty</th><th>Filled</th><th>Avg Fill</th><th>Status</th><th>Order ID</th><th>Action</th>
               </tr>
             </thead>
             <tbody>
               {orders.length === 0 ? (
-                <tr><td colSpan="12" className="ordersEmpty">No {mode.toLowerCase()} orders yet</td></tr>
+                <tr><td colSpan="15" className="ordersEmpty">No {mode.toLowerCase()} orders yet</td></tr>
               ) : (
                 orders.slice().reverse().map(order => {
                   const terminal = TERMINAL_ORDER_STATES.has(String(order.status || "").toUpperCase());
@@ -399,7 +469,10 @@ export default function Orders() {
                       <td><span className={`orderEnvironmentBadge ${orderMode === "LIVE" ? "live" : ""}`}>{orderMode}</span></td>
                       <td><strong>{order.symbol}</strong><span>{order.name}</span></td>
                       <td><span className={order.side === "BUY" ? "sideBuy" : "sideSell"}>{order.side}</span></td>
-                      <td>{order.order_type}</td>
+                      <td>{order.order_type === "NORMAL" ? "LIMIT" : order.order_type}</td>
+                      <td>{money(order.trigger_price)}</td>
+                      <td>{["NORMAL", "LIMIT", "STOP_LIMIT"].includes(order.order_type) ? money(order.price) : "—"}</td>
+                      <td>{order.time_in_force || "—"}</td>
                       <td>{order.quantity}</td>
                       <td>{order.filled_quantity}</td>
                       <td>{Number(order.filled_average_price || 0).toFixed(2)}</td>

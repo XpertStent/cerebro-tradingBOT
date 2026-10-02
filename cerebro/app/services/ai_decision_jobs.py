@@ -10,6 +10,7 @@ from app.services.ai_memory import ai_memory
 from app.services.ai_run_context import ai_run_context
 from app.services.latest_ai_decision import latest_ai_decision
 from app.services.latest_quant import latest_quant
+from app.services.proposal_review import resolution_lock
 from app.services.quant_screener import quant_screener
 from app.services.settings import settings
 
@@ -442,7 +443,8 @@ class AIDecisionJobManager:
                 else:
                     result["execution"]["approval_mode"] = "MANUAL"
 
-                latest_ai_decision.save(run_id=run_id, result=result)
+                with resolution_lock():
+                    latest_ai_decision.save(run_id=run_id, result=result)
 
                 final_stage = "AWAITING_APPROVAL" if not proposal_bundle.get("auto_execute") else "COMPLETE"
                 final_message = (
@@ -496,26 +498,16 @@ class AIDecisionJobManager:
         return data
 
     def result(self, run_id):
+        # The atomic persisted result is authoritative across API workers.
+        persisted = latest_ai_decision.load()
+        if persisted and persisted.get("run_id") == run_id:
+            return {"run_id": run_id, "status": "COMPLETE", "stage": "PERSISTED",
+                    "error": None, "result": deepcopy(persisted.get("result"))}
         with self._lock:
             job = self._jobs.get(run_id)
             if job:
-                return {
-                    "run_id": run_id,
-                    "status": job["status"],
-                    "stage": job["stage"],
-                    "error": job["error"],
-                    "result": deepcopy(job["result"]),
-                }
-
-        persisted = latest_ai_decision.load()
-        if persisted and persisted.get("run_id") == run_id:
-            return {
-                "run_id": run_id,
-                "status": "COMPLETE",
-                "stage": "PERSISTED",
-                "error": None,
-                "result": deepcopy(persisted.get("result")),
-            }
+                return {"run_id": run_id, "status": job["status"], "stage": job["stage"],
+                        "error": job["error"], "result": deepcopy(job["result"])}
         return None
 
     def latest(self):
@@ -535,78 +527,17 @@ class AIDecisionJobManager:
         return latest_ai_decision.load()
 
     def clear_latest(self):
-        latest_ai_decision.delete()
+        with resolution_lock():
+            latest_ai_decision.delete()
         return {"cleared": True}
 
     def approve(self, run_id):
-        payload = self.result(run_id)
-        if not payload or not payload.get("result"):
-            raise RuntimeError("AI run result not found")
+        from app.api.ai_decision import _legacy_batch
+        return _legacy_batch(run_id, "approve")
 
-        result = deepcopy(payload["result"])
-        execution = result.get("execution") or {}
-        if execution.get("approval_mode") != "MANUAL":
-            raise RuntimeError("This AI run is not awaiting manual approval")
-
-        updated = []
-        failures = 0
-        for proposal in execution.get("proposals") or []:
-            if proposal.get("status") == "PENDING_APPROVAL":
-                try:
-                    updated.append(ai_execution.approve(proposal))
-                except Exception as exc:
-                    failures += 1
-                    updated.append(self._execution_failed(proposal, exc))
-            else:
-                updated.append(proposal)
-
-        execution["proposals"] = updated
-        execution["approval_mode"] = "MANUAL_APPROVED"
-        execution["execution_failures"] = failures
-        result["execution"] = execution
-        latest_ai_decision.save(run_id=run_id, result=result)
-        self.update(
-            run_id,
-            stage="COMPLETE",
-            message=(
-                "AI decisions approved; eligible PAPER orders and watchlist actions applied"
-                if failures == 0
-                else f"AI decisions approved with {failures} application failure(s)"
-            ),
-            result=result,
-        )
-        self._event(run_id, "APPROVAL", "Manual decision approval submitted", kind="SUCCESS")
-        return result
-
-    def reject(self, run_id):
-        payload = self.result(run_id)
-        if not payload or not payload.get("result"):
-            raise RuntimeError("AI run result not found")
-
-        result = deepcopy(payload["result"])
-        execution = result.get("execution") or {}
-        if execution.get("approval_mode") != "MANUAL":
-            raise RuntimeError("This AI run is not awaiting manual approval")
-
-        updated = []
-        for proposal in execution.get("proposals") or []:
-            if proposal.get("status") == "PENDING_APPROVAL":
-                updated.append(ai_execution.reject(proposal))
-            else:
-                updated.append(proposal)
-
-        execution["proposals"] = updated
-        execution["approval_mode"] = "MANUAL_REJECTED"
-        result["execution"] = execution
-        latest_ai_decision.save(run_id=run_id, result=result)
-        self.update(
-            run_id,
-            stage="COMPLETE",
-            message="AI decisions rejected — no pending trade or watchlist actions were applied",
-            result=result,
-        )
-        self._event(run_id, "APPROVAL", "Manual decisions rejected; no pending AI actions applied")
-        return result
+    def reject(self, run_id, reason=None):
+        from app.api.ai_decision import _legacy_batch
+        return _legacy_batch(run_id, "reject", reason)
 
 
 ai_decision_jobs = AIDecisionJobManager()
