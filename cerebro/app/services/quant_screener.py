@@ -7,6 +7,7 @@ from app.services.trading import trading
 from app.services.risk import risk
 from app.services.market_metrics import market_metrics
 from app.services.market_series import market_series
+from app.services.market_data import market_data
 from app.services.universe import universe_service
 from app.services.local_discovery import local_discovery
 from app.services.opend import opend
@@ -69,6 +70,7 @@ class QuantScreener:
             settings.get("quant.benchmark_symbol")
             or "US.SPY"
         ).upper()
+        data_configuration = market_data.configuration()
         snapshot_batch_size = int(
             settings.get("quant.snapshot_batch_size")
         )
@@ -187,6 +189,9 @@ class QuantScreener:
             benchmark_symbol,
             candles=benchmark_series["bars"],
         )
+        benchmark["data_quality"] = benchmark_series["history_sync"]
+        if not benchmark.get("available"):
+            raise ValueError("Benchmark history is unavailable; relative-strength ranking cannot proceed.")
 
         for index, item in enumerate(deep_candidates, start=1):
             symbol = item["symbol"]
@@ -278,6 +283,7 @@ class QuantScreener:
                     symbol,
                     candles=series["bars"],
                 )
+                metrics["data_quality"] = series["history_sync"]
 
             except HistoryQuotaReserved as exc:
                 metrics = {
@@ -432,7 +438,12 @@ class QuantScreener:
             for item in final:
                 item.pop("account_sizing", None)
 
+        if market_data.configuration() != data_configuration:
+            raise ValueError("Market-data settings changed during the scan. Run the scan again.")
+        if not market_data.metrics_current(benchmark_symbol,benchmark):
+            raise ValueError("A new exchange session/adjustment became effective during the scan. Run the scan again.")
         return {
+            "data_configuration": data_configuration,
             "account_context": funding,
             "market": "US",
             "method": "LOCAL_SNAPSHOT_MULTI_FACTOR_V3",
@@ -459,6 +470,7 @@ class QuantScreener:
             },
             "returned": len(final),
             "benchmark": {
+                "data_quality": benchmark_series["history_sync"],
                 "symbol": benchmark_symbol,
                 "return_20d_pct": benchmark.get("return_20d_pct"),
                 "return_60d_pct": benchmark.get("return_60d_pct"),
@@ -504,7 +516,7 @@ class QuantScreener:
 
             while remaining:
                 try:
-                    rows = opend.get_snapshots(remaining)
+                    rows = market_data.get_snapshots(remaining, enrich=True)
                     for row in rows:
                         symbol = (
                             row.get("symbol")
@@ -516,6 +528,8 @@ class QuantScreener:
                     break
 
                 except Exception as exc:
+                    if getattr(exc,"code",None) in {"MARKET_DATA_ACCESS_DENIED","MARKET_DATA_CREDENTIALS_REQUIRED","MARKET_DATA_RATE_LIMITED"}:
+                        raise
                     message = str(exc)
 
                     if "high frequency" in message.lower():

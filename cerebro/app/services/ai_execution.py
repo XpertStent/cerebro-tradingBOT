@@ -4,6 +4,7 @@ from app.services.ai_memory import ai_memory
 from app.services.ai_thesis_store import ai_theses
 from app.services.activity import activity
 from app.services.opend import opend
+from app.services.market_data import market_data
 from app.services.risk import risk
 from app.services.settings import settings
 from app.services.trading import trading
@@ -168,6 +169,8 @@ class AIExecutionService:
                 "order": None,
                 "risk": None,
                 "message": None,
+                "market_data_configuration": (context.get("quant_context") or {}).get("data_configuration"),
+                "indicator_metrics": deepcopy((candidate.get("quant") or {}).get("metrics")),
             }
 
             # WATCH is an operator decision, not a broker order. It intentionally
@@ -291,6 +294,13 @@ class AIExecutionService:
             metrics = ((candidate.get("quant") or {}).get("metrics") or {})
             median_turnover = metrics.get("median_turnover_60d")
             proposal["median_turnover_60d"] = median_turnover
+            if proposal["market_data_configuration"] != market_data.configuration() or (metrics and not market_data.metrics_current(symbol,metrics)):
+                proposal["status"] = "BLOCKED"
+                proposal["message"] = "Market indicators became stale during the decision cycle. Run a new cycle."
+                ai_memory.set_execution_result(record["id"],status="REJECTED",
+                                               rejection_code="MARKET_DATA_NOT_CURRENT",rejection_reason=proposal["message"])
+                proposals.append(proposal)
+                continue
 
             risk_result = risk.evaluate_order(
                 trading_enabled=settings.get_bool("trading.enabled"),
@@ -355,6 +365,7 @@ class AIExecutionService:
         }
 
     def _fresh_execution_order(self, proposal):
+        market_data.validate_proposal(proposal)
         symbol = proposal["symbol"]
         action = proposal["action"]
 

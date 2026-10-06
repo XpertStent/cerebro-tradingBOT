@@ -293,7 +293,7 @@ class OpenDClient:
                 "max_count": 1000,
             }
 
-            market_timezone = "America/New_York" if symbol.startswith("US.") else "Asia/Hong_Kong"
+            market_timezone = {"US":"America/New_York", "HK":"Asia/Hong_Kong", "SH":"Asia/Shanghai", "SZ":"Asia/Shanghai", "SG":"Asia/Singapore", "MY":"Asia/Kuala_Lumpur", "JP":"Asia/Tokyo"}.get(symbol.split(".")[0], "Asia/Hong_Kong")
             now = datetime.now(ZoneInfo(market_timezone))
             minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
             if timeframe in minutes:

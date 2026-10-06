@@ -1,4 +1,4 @@
-import { mergeCandles, prependedCount } from "./candleData";
+import { mergeCandles, mergeCandleResponse, sameCandleSeries, prependedCount } from "./candleData";
 import useSymbolSearch from "./useSymbolSearch";
 import { fetchJson } from "./fetchJson";
 import { securityLabel, selectedSecurityForQuery } from "./marketSelection";
@@ -203,7 +203,7 @@ export default function Markets() {
           if (requestId !== chartRequestId.current) return;
           if (c.symbol !== target || c.timeframe !== timeframe) throw new Error("Chart response does not match the selected security and interval");
           candleQuotaBlocked.current = false;
-          setCandles(previous => quiet ? mergeCandles(previous, c.candles || []) : (c.candles || []));
+          setCandles(previous => mergeCandleResponse(previous, c, quiet));
           setChartInfo(c);
         })
         .catch(failure => {
@@ -348,10 +348,15 @@ export default function Markets() {
       const data = await fetchJson(`/api/market/${encodeURIComponent(symbol)}/candles?timeframe=${timeframe}&count=250&before=${encodeURIComponent(candles[0].time)}`, { cache: "no-store", timeoutMs: 45000 });
       if (generation !== chartGeneration.current) return;
       if (data.symbol !== symbol || data.timeframe !== timeframe) throw new Error("Earlier chart response does not match the selected security");
+      if (!sameCandleSeries(candles[0], data)) {
+        setHistoryStatus("History adjustment or provider changed. Reloading the chart…");
+        await loadSymbol(symbol);
+        return;
+      }
       const earlier = (data.candles || []).filter(candle => candle.time < candles[0].time);
       historyEnded.current = earlier.length === 0;
       setCandles(previous => mergeCandles(previous, earlier));
-      setHistoryStatus(earlier.length ? "" : "No earlier candles returned by OpenD for this range.");
+      setHistoryStatus(earlier.length ? "" : "No earlier candles returned by the selected provider for this range.");
     } catch (failure) {
       if (generation === chartGeneration.current) {
         candleQuotaBlocked.current = historyQuotaFailure(failure);
@@ -616,6 +621,7 @@ export default function Markets() {
 
       {loading && !quote && <div className="searchingText" role="status">Loading {symbol} quote and candles…</div>}
       {quoteError && <div className="chartError" role="alert">Quote unavailable: {quoteError} Press Search to retry the selected security.</div>}
+      {quote?.provider === "alpaca" && <div className="searchingText" role="status">Alpaca {quote.feed} market price{quote.delay_minutes ? ` · ${quote.delay_minutes}-minute delay` : ""} · As of {quote.as_of || "Unavailable"}{quote.quote_fresh === false ? " · Quote is stale" : ""}. Orders use fresh Moomoo execution prices.</div>}
 
       {symbol && (
 
@@ -714,7 +720,9 @@ export default function Markets() {
 
 
           <section className="chartPanel">
-            <p>Regular-session candles · New York time (US) · Unadjusted prices. Interval buttons select candle duration, not date range.</p>
+            <p>{chartInfo?.provider === "alpaca" ? "Alpaca" : "OpenD"} · {chartInfo?.feed || "Selected feed"} · {chartInfo?.session === "PROVIDER_AGGREGATE" ? "Provider daily/weekly aggregate" : "Regular session"} · {chartInfo?.adjustment || "Configured adjustment"}{chartInfo?.delay_minutes ? ` · ${chartInfo.delay_minutes}-minute delay` : ""}. Interval buttons select candle duration, not date range.</p>
+            {chartInfo?.provider === "alpaca" && ["1d", "1w"].includes(timeframe) && <p>Alpaca aggregates can include extended-session volume. Quant uses final daily bars after the New York calendar day ends and the data delay has passed.</p>}
+            {chartInfo?.fresh === false && <p role="status" className="searchingText">Cached history is not current. {chartInfo.refresh_error?.message || "The latest completed exchange session is missing."} Quant and AI cannot use these indicators as current data.</p>}
 
             <div className="chartToolbar">
               <label><input type="checkbox" checked={followLatest} onChange={event => setFollowLatest(event.target.checked)}/> Follow latest (refresh every 30s)</label>
@@ -815,6 +823,7 @@ export default function Markets() {
                 followLatest={followLatest}
                 latestJump={latestJump}
                 timeframe={timeframe}
+                timezone={chartInfo?.timezone || "America/New_York"}
                 chartType={chartType}
                 showVolume={showVolume}
               />
@@ -945,7 +954,7 @@ export default function Markets() {
 }
 
 
-function PriceChart({ candles, followLatest, latestJump, timeframe, chartType, showVolume, onLoadOlder, onBrowseHistory }) {
+function PriceChart({ candles, followLatest, latestJump, timeframe, timezone, chartType, showVolume, onLoadOlder, onBrowseHistory }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const previousData = useRef([]);
@@ -960,11 +969,11 @@ function PriceChart({ candles, followLatest, latestJump, timeframe, chartType, s
       grid: { vertLines: { color: "#f1f5f9" }, horzLines: { color: "#f1f5f9" } },
       rightPriceScale: { borderColor: "#e2e8f0" },
       localization: { timeFormatter: time => typeof time === "number"
-        ? new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
+        ? new Intl.DateTimeFormat("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
         : `${time.year}-${time.month}-${time.day}` },
       timeScale: { borderColor: "#e2e8f0", timeVisible: !["1d", "1w"].includes(timeframe),
         tickMarkFormatter: time => typeof time === "number"
-          ? new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
+          ? new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
           : `${time.year}-${time.month}-${time.day}` }
     });
     const price = chart.addSeries(chartType === "candles" ? CandlestickSeries : LineSeries, chartType === "line" ? { lineWidth: 2 } : {});
@@ -983,7 +992,7 @@ function PriceChart({ candles, followLatest, latestJump, timeframe, chartType, s
       chartRef.current = null;
       chart.remove();
     };
-  }, [timeframe, chartType, showVolume]);
+  }, [timeframe, timezone, chartType, showVolume]);
 
   useEffect(() => {
     const state = chartRef.current;
@@ -1007,7 +1016,7 @@ function PriceChart({ candles, followLatest, latestJump, timeframe, chartType, s
     }
     previousData.current = candles;
     state.updating = false;
-  }, [candles, timeframe, chartType, showVolume, followLatest, latestJump]);
+  }, [candles, timeframe, timezone, chartType, showVolume, followLatest, latestJump]);
 
   return <div ref={containerRef} className="priceChart" onPointerDown={onBrowseHistory} onWheel={onBrowseHistory}/>;
 }

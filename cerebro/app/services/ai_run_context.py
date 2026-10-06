@@ -6,6 +6,7 @@ from app.services.opend import opend
 from app.services.trading import trading
 from app.services.watchlist import watchlist
 from app.services.latest_quant import latest_quant
+from app.services.market_data import market_data
 from app.services.settings import settings
 
 
@@ -89,13 +90,13 @@ class AIRunContextBuilder:
         if not symbols:
             return {}
         try:
-            rows = opend.get_snapshots(symbols)
+            rows = market_data.get_snapshots(symbols)
         except Exception:
             return {}
         return {
             str(item.get("symbol") or "").upper(): item
             for item in rows
-            if item.get("symbol")
+            if item.get("symbol") and item.get("quote_fresh") is not False
         }
 
     def build(
@@ -107,6 +108,7 @@ class AIRunContextBuilder:
         research_progress_callback=None,
     ):
         """Build deterministic decision context with clustered live research."""
+        data_configuration = market_data.configuration()
 
         if max_candidates is None:
             max_candidates = int(settings.get("ai.context.max_candidates"))
@@ -137,6 +139,9 @@ class AIRunContextBuilder:
         positions = [self._compact_position(item) for item in positions_raw]
         latest_quant_data = latest_quant.load() or {}
         quant_candidates = latest_quant.candidates()
+        # Saved rankings are historical snapshots, not permission to reuse stale
+        # indicators or a previous provider's adjustment/feed in a new prompt.
+        quant_candidates = [item for item in quant_candidates if market_data.metrics_current(item.get("symbol"), item.get("metrics") or {})]
         quant_by_symbol = {
             item.get("symbol"): item
             for item in quant_candidates if item.get("symbol")
@@ -303,6 +308,8 @@ class AIRunContextBuilder:
                 "rejection_summary": memory.get("rejection_summary"),
             })
 
+        if market_data.configuration() != data_configuration:
+            raise RuntimeError("Market-data settings changed while building AI context. Run a new cycle.")
         return {
             "schema_version": 5,
             "run": {
@@ -332,6 +339,8 @@ class AIRunContextBuilder:
                 "pending_orders": pending_orders,
             },
             "quant_context": {
+                "data_configuration": data_configuration,
+                "data_note": "Indicators are completed-session data from the selected provider and adjustment. Research/decision memory is historical. Delayed market quotes must not be treated as real-time execution prices.",
                 "account_context_at_scan": (latest_quant_data.get("result") or latest_quant_data).get("account_context"),
                 "account_sizing_note": "Scan annotations are historical. Use the current portfolio account available_cash for decisions; execution revalidates funds.",
                 "run_id": latest_quant_data.get("run_id"),

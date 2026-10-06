@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from app.config import config
 from app.services.opend import opend
+from app.services.market_data import market_data
 from app.services.settings import settings
 from app.services.trading import trading
 from app.services.ai_execution import ai_execution
@@ -85,6 +86,10 @@ def system_status():
     try:
         opend_status = opend.get_status()
         quote_ready = opend_status["quote_server"]
+        data_configuration = market_data.configuration()
+        data_status = "READY" if quote_ready else "WAITING"
+        if data_configuration["provider"] == "alpaca":
+            data_status = "CONFIGURED" if settings.get("alpaca.api_key") and settings.get("alpaca.secret_key") else "CREDENTIALS_REQUIRED"
         trading_state = trading.trading_status(refresh=False)
         trading_ready = bool(trading_state.get("ready"))
 
@@ -93,7 +98,9 @@ def system_status():
             "status": "READY" if quote_ready else "WAITING",
             "opend": opend_status,
             "market_data": {
-                "status": "READY" if quote_ready else "WAITING",
+                **data_configuration,
+                "status": data_status,
+                "credentials_note": "Configured keys do not verify provider entitlement; market requests report access failures.",
             },
             "trading": {
                 **trading_state,

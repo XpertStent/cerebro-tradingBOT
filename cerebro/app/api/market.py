@@ -4,6 +4,8 @@ import time
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.opend import opend
+from app.services.market_data import market_data
+from app.services.alpaca_data import MarketDataError
 from app.services.symbol_catalog import SymbolCatalogTimeout
 from app.services.history_quota import HistoricalCandleQuotaError
 
@@ -68,7 +70,7 @@ def market_snapshots(
         requested = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
         if not requested:
             raise HTTPException(status_code=400, detail="At least one symbol is required")
-        return {"count": len(requested), "quotes": opend.get_snapshots(requested)}
+        return {"count": len(requested), "quotes": market_data.get_snapshots(requested)}
     except HTTPException:
         raise
     except Exception as exc:
@@ -83,8 +85,10 @@ def market_candles(
     before: str | None = Query(None, description="Exclusive candle time in the market timezone")
 ):
     try:
-        return opend.get_candles(symbol=symbol, timeframe=timeframe, count=count, before=before)
+        return market_data.get_candles(symbol=symbol, timeframe=timeframe, count=count, before=before)
     except HistoricalCandleQuotaError as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code, "message": str(exc)}) from exc
+    except MarketDataError as exc:
         raise HTTPException(status_code=503, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -95,6 +99,6 @@ def market_candles(
 @router.get("/{symbol}")
 def market_snapshot(symbol: str):
     try:
-        return opend.get_snapshot(symbol)
+        return market_data.get_snapshot(symbol)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.services.market_history import (
     market_history
 )
+from app.services.market_data import market_data
 
 
 router = APIRouter(
@@ -17,8 +18,6 @@ def sync_history(
 ):
     return market_history.ensure_history(
         symbol.upper(),
-        minimum_bars=300,
-        fetch_count=500
     )
 
 
@@ -34,11 +33,12 @@ def get_history(
                 limit,
                 1
             ),
-            500
+            1000
         )
     )
 
     return {
+        **market_data.provenance(symbol.upper()),
         "symbol":
             symbol.upper(),
 

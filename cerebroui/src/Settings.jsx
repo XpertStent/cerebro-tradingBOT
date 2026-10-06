@@ -52,7 +52,7 @@ function SettingControl({ item, value, onChange, disabled }) {
         onChange={e => onChange(e.target.value)}
       >
         {(item.options || []).map(option => (
-          <option key={option} value={option}>{option}</option>
+          <option key={option} value={option}>{item.option_labels?.[option] || option}</option>
         ))}
       </select>
     );

@@ -46,7 +46,7 @@ class ProposalTests(unittest.TestCase):
         self.memory=load_class('ai_memory.py','AIMemoryStore',ns)()
         self.theses=load_class('ai_thesis_store.py','AIThesisStore',ns)()
         self.store=latest.LatestAIDecisionStore(Path(self.temp.name)/'latest.json')
-        self.exec_ns=dict(deepcopy=deepcopy,ai_memory=self.memory,ai_theses=self.theses)
+        self.exec_ns=dict(deepcopy=deepcopy,ai_memory=self.memory,ai_theses=self.theses,market_data=Mock())
         self.engine=load_class('ai_execution.py','AIExecutionService',self.exec_ns,{'_persist_decision','approve','_activate_approved_thesis','reject','_fresh_execution_order'})()
 
     def decision(self, symbol='US.TEST'):
