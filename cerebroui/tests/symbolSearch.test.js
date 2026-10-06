@@ -29,3 +29,28 @@ test('typing uses one field timer, explicit search cancels debounce, and cache i
   await worker.run('test-cache',{...options,markets:['HK']});assert.equal(calls,2);
   assert.equal(states.at(-1).searching,false);
 });
+
+test('a never-ending broker search leaves the spinner and permits a successful retry', async () => {
+  const states=[],timers=new Map();let id=0,success=false;
+  const worker=createSymbolSearch({publish:s=>states.push(s),setTimer:f=>{timers.set(++id,f);return id;},clearTimer:t=>timers.delete(t),
+    fetcher:async()=>success ? response([{symbol:'US.RETRY'}]) : new Promise(()=>{})});
+  const first=worker.run('deadline-retry-test',options);
+  assert.equal(states.at(-1).searching,true);
+  [...timers.values()][0]();await first;
+  assert.equal(states.at(-1).searching,false);
+  assert.match(states.at(-1).error,/timed out/);
+  success=true;
+  assert.deepEqual(await worker.run('deadline-retry-test',options),[{symbol:'US.RETRY'}]);
+  assert.equal(states.at(-1).error,null);
+});
+
+test('explicit Enter/Search gets returned results and HTTP failures clear the spinner', async () => {
+  const states=[];
+  const worker=createSymbolSearch({publish:s=>states.push(s),fetcher:async()=>response([{symbol:'US.EXPLICIT'}])});
+  assert.deepEqual(await worker.run('explicit-result',options),[{symbol:'US.EXPLICIT'}]);
+  assert.deepEqual(await worker.run('explicit-result',options),[{symbol:'US.EXPLICIT'}]);
+  const unavailable=createSymbolSearch({publish:s=>states.push(s),fetcher:async()=>({ok:false,status:504,json:async()=>({detail:'Catalog still loading'})})});
+  await unavailable.run('unavailable',options);
+  assert.equal(states.at(-1).searching,false);
+  assert.equal(states.at(-1).error,'Catalog still loading');
+});

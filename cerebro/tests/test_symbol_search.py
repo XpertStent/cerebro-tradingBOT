@@ -49,7 +49,7 @@ class SearchTests(unittest.TestCase):
     def test_new_queries_reuse_opend_catalog_and_qualified_symbols(self):
         cls=next(n for n in ast.parse((ROOT/'opend.py').read_text()).body if isinstance(n,ast.ClassDef))
         cls.body=[n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name in {'_load_symbol_catalog','search_symbols'}]
-        ns=dict(RET_OK=0,Market=SimpleNamespace(**{x:x for x in ['US','HK','SH','SZ','SG','MY','JP']}),SecurityType=SimpleNamespace(STOCK='STOCK',ETF='ETF'))
+        ns=dict(time=catalog.time,SymbolCatalogTimeout=catalog.SymbolCatalogTimeout,RET_OK=0,Market=SimpleNamespace(**{x:x for x in ['US','HK','SH','SZ','SG','MY','JP']}),SecurityType=SimpleNamespace(STOCK='STOCK',ETF='ETF'))
         exec(compile(ast.Module(body=[cls],type_ignores=[]),'opend','exec'),ns)
         client=ns['OpenDClient']();client._symbol_catalog=catalog.SymbolCatalogCache()
         stock=[{'code':'US.VOOG','name':'Growth fund'},{'code':'US.VOO','name':'Broad fund'},{'code':'US.VOOGX','name':'Another growth fund'},{'code':'US.TEST.A','name':'Synthetic class A'}]
@@ -64,3 +64,25 @@ class SearchTests(unittest.TestCase):
         self.assertTrue(all(not any(k.startswith('_') for k in r) for r in first))
         self.assertEqual(client.search_symbols('US.VOOG',markets=['HK']),[])
         self.assertEqual(ctx.close.call_count,2)
+
+
+    def test_hung_loader_times_out_without_duplicate_downloads_then_recovers(self):
+        cache=catalog.SymbolCatalogCache(wait_timeout=0.02)
+        entered=threading.Event();release=threading.Event()
+        def load():
+            entered.set()
+            release.wait(timeout=3)
+            return [{'symbol':'US.TEST'}]
+        loader=Mock(side_effect=load)
+        try:
+            with self.assertRaises(catalog.SymbolCatalogTimeout): cache.get('US',loader)
+            self.assertTrue(entered.is_set())
+            with self.assertRaises(catalog.SymbolCatalogTimeout): cache.get('US',loader)
+            loader.assert_called_once()
+            with cache._lock: completed=cache._loading['US']
+            release.set()
+            self.assertTrue(completed.wait(timeout=3))
+            self.assertEqual(cache.get('US',loader),({'symbol':'US.TEST'},))
+            loader.assert_called_once()
+        finally:
+            release.set()

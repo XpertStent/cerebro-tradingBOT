@@ -1,17 +1,37 @@
-"""Cache OpenD reference data, sharing one load across concurrent searches."""
+"""Share catalog loads without leaving API requests waiting indefinitely."""
 import threading
 import time
 
 
+class SymbolCatalogTimeout(RuntimeError):
+    pass
+
+
 class SymbolCatalogCache:
-    def __init__(self, ttl=21600, retry_after=30):
+    def __init__(self, ttl=21600, retry_after=30, wait_timeout=4):
         self.ttl = ttl
         self.retry_after = retry_after
+        self.wait_timeout = wait_timeout
         self._entries = {}
         self._loading = {}
         self._lock = threading.Lock()
 
-    def get(self, key, loader):
+    def _load(self, key, loader, previous, pending):
+        try:
+            updated = dict(items=tuple(loader()), error=None,
+                           expires=time.monotonic() + self.ttl)
+        except Exception as exc:
+            updated = dict(items=previous['items'] if previous else (),
+                           error=None if previous and not previous['error'] else str(exc),
+                           expires=time.monotonic() + self.retry_after)
+        with self._lock:
+            self._entries[key] = updated
+            self._loading.pop(key, None)
+            pending.set()
+
+    def get(self, key, loader, wait_timeout=None):
+        budget = self.wait_timeout if wait_timeout is None else max(0, wait_timeout)
+        deadline = time.monotonic() + budget
         while True:
             with self._lock:
                 entry = self._entries.get(key)
@@ -22,23 +42,11 @@ class SymbolCatalogCache:
                 pending = self._loading.get(key)
                 if pending is None:
                     pending = self._loading[key] = threading.Event()
-                    break
-            pending.wait()
-
-        updated = None
-        try:
-            items = tuple(loader())
-            updated = dict(items=items, error=None, expires=time.monotonic() + self.ttl)
-        except Exception as exc:
-            # A refresh failure must not discard the last successful catalog.
-            updated = dict(items=entry['items'] if entry else (),
-                           error=None if entry and not entry['error'] else str(exc),
-                           expires=time.monotonic() + self.retry_after)
-        finally:
-            with self._lock:
-                if updated is not None:
-                    self._entries[key] = updated
-                self._loading.pop(key).set()
-        if updated['error']:
-            raise RuntimeError(updated['error'])
-        return updated['items']
+                    # One daemon per reference-data key. A stuck SDK call cannot
+                    # occupy an API worker or trigger duplicate catalog downloads.
+                    threading.Thread(target=self._load, args=(key, loader, entry, pending),
+                                     name='opend-symbol-catalog', daemon=True).start()
+            if not pending.wait(max(0, deadline - time.monotonic())):
+                if entry and not entry['error']:
+                    return entry['items']
+                raise SymbolCatalogTimeout("OpenD securities list is still loading. Try searching again shortly.")

@@ -1,5 +1,7 @@
 import { mergeCandles, prependedCount } from "./candleData";
 import useSymbolSearch from "./useSymbolSearch";
+import { fetchJson } from "./fetchJson";
+import { securityLabel, selectedSecurityForQuery } from "./marketSelection";
 import React, {
   useEffect,
   useRef,
@@ -114,6 +116,10 @@ export default function Markets() {
   const [symbol, setSymbol] =
     useState(null);
 
+  const [selection, setSelection] = useState(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [searchSubmitted, setSearchSubmitted] = useState(false);
+
   const [quote, setQuote] =
     useState(null);
 
@@ -176,33 +182,11 @@ export default function Markets() {
 
     try {
 
-      const [
-        quoteResponse,
-        candleResponse
-      ] = await Promise.all([
-
-        fetch(
-          `/api/market/${encodeURIComponent(target)}`,
-          { cache: "no-store" }
-        ),
-
-        fetch(
-          `/api/market/${encodeURIComponent(target)}/candles?timeframe=${timeframe}&count=250`,
-          { cache: "no-store" }
-        )
+      const [q, c] = await Promise.all([
+        fetchJson(`/api/market/${encodeURIComponent(target)}`, { cache: "no-store", timeoutMs: 45000 }),
+        fetchJson(`/api/market/${encodeURIComponent(target)}/candles?timeframe=${timeframe}&count=250`,
+          { cache: "no-store", timeoutMs: 45000 })
       ]);
-
-      if (!quoteResponse.ok)
-        throw new Error("Unable to load quote");
-
-      if (!candleResponse.ok)
-        throw new Error("Unable to load chart");
-
-      const q =
-        await quoteResponse.json();
-
-      const c =
-        await candleResponse.json();
 
       if (requestId !== chartRequestId.current) return;
       if (c.symbol !== target || c.timeframe !== timeframe) throw new Error("Chart response does not match the selected security and interval");
@@ -250,16 +234,15 @@ export default function Markets() {
 
   function chooseSuggestion(item) {
     ++chartRequestId.current;
-
-    setSearch(
-      `${item.ticker} — ${item.name}`
-    );
-
+    setSelection(item);
+    setSearch(securityLabel(item));
     setSymbol(item.symbol);
-
+    setRefreshVersion(value => value + 1);
     symbolLookup.clear();
+    setSearchSubmitted(false);
     setShowMarketFilter(false);
-
+    setLoading(true);
+    setError(null);
     setQuote(null);
     setCandles([]);
   }
@@ -270,6 +253,9 @@ export default function Markets() {
 
     setSearch("");
     setSymbol(null);
+    setSelection(null);
+    setSearchSubmitted(false);
+    setLoading(false);
     setQuote(null);
     setCandles([]);
     symbolLookup.clear();
@@ -296,18 +282,20 @@ export default function Markets() {
   }
 
 
-  function submitSearch(e) {
-
+  async function submitSearch(e) {
     e.preventDefault();
-
-    if (suggestions.length) {
-      chooseSuggestion(
-        suggestions[0]
-      );
+    setSearchSubmitted(true);
+    const selected = selectedSecurityForQuery(selection, search);
+    if (selected) {
+      chooseSuggestion(selected);
       return;
     }
-
-    symbolLookup.run(search);
+    if (suggestions.length) {
+      chooseSuggestion(suggestions[0]);
+      return;
+    }
+    const results = await symbolLookup.run(search);
+    if (results?.length) chooseSuggestion(results[0]);
   }
 
 
@@ -325,16 +313,7 @@ export default function Markets() {
 
     if (pendingSymbol) {
 
-      const ticker =
-        pendingSymbol.split(".").pop();
-
-      setSymbol(pendingSymbol);
-
-      setSearch(
-        pendingName
-          ? `${ticker} — ${pendingName}`
-          : ticker
-      );
+      chooseSuggestion({ symbol: pendingSymbol, name: pendingName || "" });
 
       sessionStorage.removeItem(
         "cerebro.market.symbol"
@@ -381,10 +360,10 @@ export default function Markets() {
     setFollowLatest(true);
     if (symbol) loadSymbol(symbol);
     return () => { ++chartGeneration.current; ++chartRequestId.current; };
-  }, [symbol, timeframe]);
+  }, [symbol, timeframe, refreshVersion]);
 
   useEffect(() => {
-    if (!symbol || !followLatest) return;
+    if (!symbol || !followLatest || loading) return;
     let cancelled = false;
     let timer;
     const refresh = async () => {
@@ -393,7 +372,7 @@ export default function Markets() {
     };
     timer = setTimeout(refresh, 30000);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [symbol, timeframe, followLatest]);
+  }, [symbol, timeframe, followLatest, loading]);
 
 
   useEffect(() => {
@@ -449,7 +428,7 @@ export default function Markets() {
                 e.target.value;
 
               setSearch(value);
-
+              setSearchSubmitted(false);
               symbolLookup.schedule(value);
             }}
             placeholder="Search ticker or company name"
@@ -616,8 +595,14 @@ export default function Markets() {
 
         )}
 
+        {symbolLookup.error && <div className="chartError" role="alert">{symbolLookup.error}</div>}
+        {searchSubmitted && !searching && !suggestions.length && !symbolLookup.error && !selectedSecurityForQuery(selection, search) && (
+          <div className="searchingText" role="status">{selectedMarkets.length ? "No matching securities found. Try a ticker or change the Markets filter." : "Select at least one market to search."}</div>
+        )}
       </div>
 
+      {loading && !quote && <div className="searchingText" role="status">Loading {symbol} quote and candles…</div>}
+      {error && !quote && <div className="chartError" role="alert">{error} Press Search to retry the selected security.</div>}
 
       {symbol && quote && (
 

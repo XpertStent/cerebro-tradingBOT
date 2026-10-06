@@ -8,9 +8,10 @@ from moomoo import (
 )
 
 from app.config import config
-from app.services.symbol_catalog import SymbolCatalogCache
+from app.services.symbol_catalog import SymbolCatalogCache, SymbolCatalogTimeout
 
 import math
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -479,12 +480,18 @@ class OpenDClient:
 
         matches = {}
         loaded = 0
+        waiting = False
+        deadline = time.monotonic() + 8
         for market_id in selected:
             for security_type in (SecurityType.STOCK, SecurityType.ETF):
                 try:
                     catalog = self._symbol_catalog.get(
                         (market_id, str(security_type)),
-                        lambda: self._load_symbol_catalog(market_id, market_map[market_id], security_type))
+                        lambda market_id=market_id, security_type=security_type: self._load_symbol_catalog(market_id, market_map[market_id], security_type),
+                        wait_timeout=min(4, max(0, deadline - time.monotonic())))
+                except SymbolCatalogTimeout:
+                    waiting = True
+                    continue
                 except Exception:
                     # Unsupported combinations are retried after a short backoff.
                     continue
@@ -501,6 +508,8 @@ class OpenDClient:
                     if item['symbol'] not in matches or score < matches[item['symbol']]['_score']:
                         matches[item['symbol']] = {**item, '_score': score}
         if selected and not loaded:
+            if waiting:
+                raise SymbolCatalogTimeout("OpenD securities list is still loading. Try searching again shortly.")
             raise RuntimeError("OpenD symbol catalog is unavailable; retry shortly")
         ordered = sorted(matches.values(), key=lambda item: (item['_score'], item['market'], len(item['ticker']), item['ticker']))
         return [{key: value for key, value in item.items() if not key.startswith('_')} for item in ordered[:limit]]

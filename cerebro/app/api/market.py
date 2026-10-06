@@ -4,6 +4,7 @@ import time
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.opend import opend
+from app.services.symbol_catalog import SymbolCatalogTimeout
 
 
 router = APIRouter(prefix="/market", tags=["Market Data"])
@@ -52,6 +53,8 @@ def search_market(
             "markets": selected_markets,
             "results": _cached_search(q, selected_markets, limit),
         }
+    except SymbolCatalogTimeout as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

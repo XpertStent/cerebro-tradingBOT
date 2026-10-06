@@ -1,9 +1,10 @@
+import { fetchJson } from './fetchJson.js';
 const cache = new Map();
 const TTL = 60000;
 
 // Each field owns cancellation and generation state; cached results are shared.
 export function createSymbolSearch({ publish, fetcher = (...args) => fetch(...args), delay = 250,
-  setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now } = {}) {
+  setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now, timeoutMs = 15000 } = {}) {
   let generation = 0;
   let timer;
   let controller;
@@ -27,16 +28,15 @@ export function createSymbolSearch({ publish, fetcher = (...args) => fetch(...ar
     const cached = cache.get(key);
     if (cached && now() - cached.at < TTL) {
       publish({ results: cached.results, searching: false, error: null });
-      return;
+      return cached.results;
     }
     controller = new AbortController();
     publish({ results: [], searching: true, error: null });
     try {
       const params = new URLSearchParams({ q: query, markets: markets.join(','), limit: String(limit) });
-      const response = await fetcher(`/api/market/search?${params}`, { cache: 'no-store', signal: controller.signal });
-      const data = await response.json();
+      const data = await fetchJson(`/api/market/search?${params}`, { cache: 'no-store', controller,
+        fetcher, timeoutMs, setTimer, clearTimer });
       if (id !== generation) return;
-      if (!response.ok) throw new Error(data.detail || `Symbol search failed (${response.status})`);
       const results = data.results || [];
       if (results.length) {
         cache.delete(key);
@@ -44,8 +44,9 @@ export function createSymbolSearch({ publish, fetcher = (...args) => fetch(...ar
         if (cache.size > 100) cache.delete(cache.keys().next().value);
       }
       publish({ results, searching: false, error: null });
+      return results;
     } catch (error) {
-      if (id === generation && error.name !== 'AbortError') publish({ results: [], searching: false, error: error.message });
+      if (id === generation) publish({ results: [], searching: false, error: error.name === 'AbortError' ? 'Search interrupted. Please try again.' : error.message });
     }
   }
 
