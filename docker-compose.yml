@@ -44,8 +44,6 @@ services:
       # Optional. In LIVE mode the UI unlock button uses this server-side MD5
       # hash with OpenD. The raw trading credential is never required by CerebroUI.
       MOOMOO_TRADING_PASSWORD_MD5: ${MOOMOO_TRADING_PASSWORD_MD5:-}
-      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
-      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
 
     volumes:
       - cerebro-data:/data

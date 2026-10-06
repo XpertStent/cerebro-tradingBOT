@@ -42,16 +42,36 @@ DEFINITIONS = {
         "description": "Primary market for discovery and trading.",
     },
 
-    # OpenAI / models
+    # API credentials are grouped separately from model configuration.
     "openai.api_key": {
-        "section": "AI & Models",
-        "subsection": "Credentials",
+        "section": "API KEYS",
+        "subsection": "OpenAI",
         "label": "OpenAI API Key",
         "type": "secret",
         "default": None,
         "env": "OPENAI_API_KEY",
         "description": "Write-only OpenAI API credential. Existing values are never returned to the browser.",
     },
+    "alpaca.api_key": {
+        "section": "API KEYS",
+        "subsection": "Alpaca",
+        "label": "Alpaca API Key ID",
+        "type": "secret",
+        "default": None,
+        "future": True,
+        "description": "API Key ID for US historical market data. Provider integration is the next stage; saving this credential does not switch the history source yet.",
+    },
+    "alpaca.secret_key": {
+        "section": "API KEYS",
+        "subsection": "Alpaca",
+        "label": "Alpaca Secret Key",
+        "type": "secret",
+        "default": None,
+        "future": True,
+        "description": "Secret paired with the Alpaca API Key ID. Stored on the server and never returned to the browser.",
+    },
+
+    # Model configuration
     "ai.research.enabled": {
         "section": "AI & Models",
         "subsection": "Research",
@@ -575,7 +595,13 @@ class SettingsService:
             if isinstance(value, bool):
                 raise ValueError("must be a number")
             result = float(value)
-        elif setting_type in {"string", "secret", "enum"}:
+        elif setting_type == "secret":
+            if not isinstance(value, str):
+                raise ValueError("must be text")
+            result = value.strip()
+            if any(ord(character) < 33 or ord(character) > 126 for character in result):
+                raise ValueError("must contain printable ASCII characters without spaces")
+        elif setting_type in {"string", "enum"}:
             result = str(value).strip()
         else:
             result = value
@@ -625,6 +651,8 @@ class SettingsService:
                 continue
             try:
                 cleaned[key] = self._coerce(definition, raw)
+                if definition.get("type") == "secret" and not cleaned[key]:
+                    cleaned.pop(key)
             except Exception as exc:
                 raise ValueError(f"{key}: {exc}") from exc
 
