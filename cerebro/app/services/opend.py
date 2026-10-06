@@ -9,6 +9,7 @@ from moomoo import (
 
 from app.config import config
 from app.services.symbol_catalog import SymbolCatalogCache, SymbolCatalogTimeout
+from app.services.history_quota import HistoricalCandleQuotaError, check_history_reserve, is_history_quota_error
 
 import math
 import time
@@ -228,6 +229,18 @@ class OpenDClient:
         finally:
             ctx.close()
 
+    def check_history_capacity(self, symbol, reserve):
+        if reserve <= 0:
+            return
+        ctx = self._context()
+        try:
+            ret, quota = ctx.get_history_kl_quota(get_detail=True)
+            if ret != RET_OK:
+                raise RuntimeError("Historical analysis paused: OpenD candle quota could not be checked.")
+            check_history_reserve(self.normalize_symbol(symbol), quota, reserve)
+        finally:
+            ctx.close()
+
     def get_candles(
         self,
         symbol: str,
@@ -299,6 +312,8 @@ class OpenDClient:
             for _ in range(100):
                 ret, data, next_key = ctx.request_history_kline(**kwargs, page_req_key=page_key)
                 if ret != RET_OK:
+                    if is_history_quota_error(data):
+                        raise HistoricalCandleQuotaError(str(data))
                     raise RuntimeError(str(data))
                 for _, row in data.iterrows():
                     if row.get("code") is not None and str(row.get("code")) != symbol:

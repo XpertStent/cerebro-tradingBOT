@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.services.opend import opend
 from app.services.symbol_catalog import SymbolCatalogTimeout
+from app.services.history_quota import HistoricalCandleQuotaError
 
 
 router = APIRouter(prefix="/market", tags=["Market Data"])
@@ -83,6 +84,8 @@ def market_candles(
 ):
     try:
         return opend.get_candles(symbol=symbol, timeframe=timeframe, count=count, before=before)
+    except HistoricalCandleQuotaError as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

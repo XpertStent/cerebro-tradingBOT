@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.services.opend import opend
+from app.services.settings import settings
 
 
 class MarketHistoryStore:
@@ -602,6 +603,13 @@ class MarketHistoryStore:
                 )
 
             try:
+                # This path is for automatic historical analysis. A warm daily
+                # cache returns earlier without any broker call. Re-check quota
+                # before each fetch so changing scanner candidates cannot spend
+                # the chart reserve; manual chart requests do not use this gate.
+                opend.check_history_capacity(
+                    symbol, reserve=int(settings.get("history.chart_quota_reserve"))
+                )
                 today = datetime.now(
                     ZoneInfo(
                         "America/New_York"

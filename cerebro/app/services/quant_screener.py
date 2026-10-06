@@ -11,6 +11,7 @@ from app.services.universe import universe_service
 from app.services.local_discovery import local_discovery
 from app.services.opend import opend
 from app.services.settings import settings
+from app.services.history_quota import HistoryQuotaReserved
 
 
 class QuantScreener:
@@ -173,6 +174,20 @@ class QuantScreener:
             message="Starting historical analysis",
         )
 
+        # Load the benchmark before spending new-stock slots on candidates.
+        # If it is unavailable, fail explicitly rather than rank stocks against
+        # missing benchmark data after an expensive scan.
+        benchmark_series = market_series.build(
+            benchmark_symbol,
+            snapshot=snapshot_map.get(benchmark_symbol),
+            market_state=us_state,
+            minimum_bars=minimum_history_bars,
+        )
+        benchmark = market_metrics.build(
+            benchmark_symbol,
+            candles=benchmark_series["bars"],
+        )
+
         for index, item in enumerate(deep_candidates, start=1):
             symbol = item["symbol"]
 
@@ -264,6 +279,12 @@ class QuantScreener:
                     candles=series["bars"],
                 )
 
+            except HistoryQuotaReserved as exc:
+                metrics = {
+                    "symbol": symbol,
+                    "available": False,
+                    "skip_reason": exc.code,
+                }
             except Exception as exc:
                 analysis_failures += 1
                 metrics = {
@@ -301,7 +322,7 @@ class QuantScreener:
                     analysis_success=len(analysed),
                     analysis_skipped=analysis_skipped,
                     analysis_failures=analysis_failures,
-                    message=f"Skipped {symbol}",
+                    message=f"Skipped {symbol}: {metrics.get('skip_reason') or metrics.get('error') or 'unavailable history'}",
                 )
                 continue
 
@@ -320,17 +341,6 @@ class QuantScreener:
                 analysis_failures=analysis_failures,
                 message=f"Analysed {index} / {len(deep_candidates)}",
             )
-
-        benchmark_series = market_series.build(
-            benchmark_symbol,
-            snapshot=snapshot_map.get(benchmark_symbol),
-            market_state=us_state,
-            minimum_bars=minimum_history_bars,
-        )
-        benchmark = market_metrics.build(
-            benchmark_symbol,
-            candles=benchmark_series["bars"],
-        )
 
         for item in analysed:
             metrics = item["metrics"]

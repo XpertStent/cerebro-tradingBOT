@@ -13,7 +13,11 @@ export async function fetchJson(url, { timeoutMs = 15000, fetcher = (...args) =>
             : 'The server returned an unexpected response. Check the Cerebro backend or proxy.');
         }
         const data = await response.json();
-        if (!response.ok) throw new Error(data.detail?.message || (typeof data.detail === 'string' ? data.detail : `Request failed (${response.status})`));
+        if (!response.ok) {
+          const failure = new Error(data.detail?.message || (typeof data.detail === 'string' ? data.detail : `Request failed (${response.status})`));
+          failure.code = data.detail?.code;
+          throw failure;
+        }
         return data;
       })(),
       new Promise((_, reject) => {

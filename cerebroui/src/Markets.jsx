@@ -2,6 +2,7 @@ import { mergeCandles, prependedCount } from "./candleData";
 import useSymbolSearch from "./useSymbolSearch";
 import { fetchJson } from "./fetchJson";
 import { securityLabel, selectedSecurityForQuery } from "./marketSelection";
+import { historyQuotaFailure, candleFailureMessage } from "./candleErrors";
 import React, {
   useEffect,
   useRef,
@@ -160,6 +161,8 @@ export default function Markets() {
 
   const [error, setError] =
     useState(null);
+  const [quoteError, setQuoteError] = useState(null);
+  const candleQuotaBlocked = useRef(false);
 
 
   const chartRequestId = useRef(0);
@@ -178,34 +181,40 @@ export default function Markets() {
 
     const requestId = ++chartRequestId.current;
     if (!quiet) setLoading(true);
-    setError(null);
-
-    try {
-
-      const [q, c] = await Promise.all([
-        fetchJson(`/api/market/${encodeURIComponent(target)}`, { cache: "no-store", timeoutMs: 45000 }),
-        fetchJson(`/api/market/${encodeURIComponent(target)}/candles?timeframe=${timeframe}&count=250`,
-          { cache: "no-store", timeoutMs: 45000 })
-      ]);
-
-      if (requestId !== chartRequestId.current) return;
-      if (c.symbol !== target || c.timeframe !== timeframe) throw new Error("Chart response does not match the selected security and interval");
-      setQuote(q);
-      setCandles(previous => quiet ? mergeCandles(previous, c.candles || []) : (c.candles || []));
-      setChartInfo(c);
-
-    } catch (e) {
-      if (requestId !== chartRequestId.current) return;
-      if (!quiet) {
-        setQuote(null);
-        setCandles([]);
-      }
-      setError(e.message);
-
-    } finally {
-
-      if (requestId === chartRequestId.current) setLoading(false);
+    setQuoteError(null);
+    const jobs = [
+      fetchJson(`/api/market/${encodeURIComponent(target)}`, { cache: "no-store", timeoutMs: 45000 })
+        .then(q => {
+          if (requestId === chartRequestId.current) setQuote(q);
+        })
+        .catch(failure => {
+          if (requestId !== chartRequestId.current) return;
+          if (!quiet) setQuote(null);
+          setQuoteError(failure.message);
+        })
+    ];
+    // A broker quota failure must not hide a quote or hammer history every 30s.
+    // Explicit Search or a new symbol/interval permits a fresh candle attempt.
+    if (!quiet || !candleQuotaBlocked.current) {
+      setError(null);
+      jobs.push(fetchJson(`/api/market/${encodeURIComponent(target)}/candles?timeframe=${timeframe}&count=250`,
+        { cache: "no-store", timeoutMs: 45000 })
+        .then(c => {
+          if (requestId !== chartRequestId.current) return;
+          if (c.symbol !== target || c.timeframe !== timeframe) throw new Error("Chart response does not match the selected security and interval");
+          candleQuotaBlocked.current = false;
+          setCandles(previous => quiet ? mergeCandles(previous, c.candles || []) : (c.candles || []));
+          setChartInfo(c);
+        })
+        .catch(failure => {
+          if (requestId !== chartRequestId.current) return;
+          candleQuotaBlocked.current = historyQuotaFailure(failure);
+          if (!quiet) setCandles([]);
+          setError(candleFailureMessage(failure));
+        }));
     }
+    await Promise.all(jobs);
+    if (requestId === chartRequestId.current) setLoading(false);
   }
 
 
@@ -243,6 +252,7 @@ export default function Markets() {
     setShowMarketFilter(false);
     setLoading(true);
     setError(null);
+    setQuoteError(null);
     setQuote(null);
     setCandles([]);
   }
@@ -260,6 +270,7 @@ export default function Markets() {
     setCandles([]);
     symbolLookup.clear();
     setError(null);
+    setQuoteError(null);
   }
 
 
@@ -328,15 +339,13 @@ export default function Markets() {
 
 
   async function loadOlder() {
-    if (!symbol || !candles.length || olderRequest.current || historyEnded.current) return;
+    if (!symbol || !candles.length || olderRequest.current || historyEnded.current || candleQuotaBlocked.current) return;
     const generation = chartGeneration.current;
     const token = {};
     olderRequest.current = token;
     setHistoryStatus("Loading earlier candles…");
     try {
-      const response = await fetch(`/api/market/${encodeURIComponent(symbol)}/candles?timeframe=${timeframe}&count=250&before=${encodeURIComponent(candles[0].time)}`, { cache: "no-store" });
-      if (!response.ok) throw new Error("Earlier candles unavailable from OpenD. Scroll again to retry.");
-      const data = await response.json();
+      const data = await fetchJson(`/api/market/${encodeURIComponent(symbol)}/candles?timeframe=${timeframe}&count=250&before=${encodeURIComponent(candles[0].time)}`, { cache: "no-store", timeoutMs: 45000 });
       if (generation !== chartGeneration.current) return;
       if (data.symbol !== symbol || data.timeframe !== timeframe) throw new Error("Earlier chart response does not match the selected security");
       const earlier = (data.candles || []).filter(candle => candle.time < candles[0].time);
@@ -344,7 +353,10 @@ export default function Markets() {
       setCandles(previous => mergeCandles(previous, earlier));
       setHistoryStatus(earlier.length ? "" : "No earlier candles returned by OpenD for this range.");
     } catch (failure) {
-      if (generation === chartGeneration.current) setHistoryStatus(failure.message);
+      if (generation === chartGeneration.current) {
+        candleQuotaBlocked.current = historyQuotaFailure(failure);
+        setHistoryStatus(candleFailureMessage(failure));
+      }
     } finally {
       if (olderRequest.current === token) olderRequest.current = null;
     }
@@ -353,6 +365,7 @@ export default function Markets() {
   useEffect(() => {
     ++chartGeneration.current;
     historyEnded.current = false;
+    candleQuotaBlocked.current = false;
     olderRequest.current = null;
     setHistoryStatus("");
     setChartInfo(null);
@@ -602,13 +615,13 @@ export default function Markets() {
       </div>
 
       {loading && !quote && <div className="searchingText" role="status">Loading {symbol} quote and candles…</div>}
-      {error && !quote && <div className="chartError" role="alert">{error} Press Search to retry the selected security.</div>}
+      {quoteError && <div className="chartError" role="alert">Quote unavailable: {quoteError} Press Search to retry the selected security.</div>}
 
-      {symbol && quote && (
+      {symbol && (
 
         <>
 
-          <section className="marketQuotePanel">
+          {quote && <section className="marketQuotePanel">
 
             <div>
 
@@ -697,7 +710,7 @@ export default function Markets() {
 
             </div>
 
-          </section>
+          </section>}
 
 
           <section className="chartPanel">
@@ -706,7 +719,7 @@ export default function Markets() {
             <div className="chartToolbar">
               <label><input type="checkbox" checked={followLatest} onChange={event => setFollowLatest(event.target.checked)}/> Follow latest (refresh every 30s)</label>
               <button onClick={() => { setFollowLatest(true); setLatestJump(value => value + 1); }}>Latest</button>
-              <span>Last candle: {chartInfo?.latest_candle_time || "Loading…"} {chartInfo?.timezone || ""}</span>
+              <span>Last candle: {chartInfo?.latest_candle_time || (loading ? "Loading…" : "Unavailable")} {chartInfo?.timezone || ""}</span>
 
               <div className="timeframeButtons">
 
@@ -790,7 +803,7 @@ export default function Markets() {
             </div>
 
 
-            {error && <div className="chartError">{error}</div>}
+            {error && <div className="chartError" role="alert">{error}</div>}
             {historyStatus && <p role="status">{historyStatus}</p>}
             {(
 

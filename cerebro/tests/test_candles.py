@@ -1,4 +1,5 @@
 import ast
+import importlib.util
 import math
 import unittest
 from datetime import datetime, timedelta
@@ -6,6 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
+
+quota_spec = importlib.util.spec_from_file_location('history_quota', Path(__file__).resolve().parents[1] / 'app/services/history_quota.py')
+quota = importlib.util.module_from_spec(quota_spec)
+quota_spec.loader.exec_module(quota)
 
 
 class Frame:
@@ -19,7 +24,9 @@ class CandleTests(unittest.TestCase):
         cls = next(n for n in ast.parse(source.read_text()).body if isinstance(n, ast.ClassDef))
         method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name=='get_candles')
         ns = dict(math=math, datetime=datetime, timedelta=timedelta, ZoneInfo=ZoneInfo,
-                  RET_OK=0, AuType=SimpleNamespace(NONE='NONE', QFQ='QFQ'))
+                  RET_OK=0, AuType=SimpleNamespace(NONE='NONE', QFQ='QFQ'),
+                  is_history_quota_error=quota.is_history_quota_error,
+                  HistoricalCandleQuotaError=quota.HistoricalCandleQuotaError)
         exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), ns)
         ctx = Mock(); ctx.request_history_kline.side_effect = responses
         client = SimpleNamespace(normalize_symbol=lambda s:s, TIMEFRAMES={'1m':'1m','60m':'60m','1d':'day'},
@@ -70,6 +77,13 @@ class CandleTests(unittest.TestCase):
         latest['code']='US.AAPL'
         load, _ = self.client([(0,Frame([latest]),None)])
         with self.assertRaisesRegex(RuntimeError,'symbol'): load(symbol='US.MU', timeframe='60m')
+
+    def test_quota_is_distinguished_from_other_broker_errors(self):
+        load, ctx = self.client([(1, 'Insufficient historical K-line quota. Request failed.', None)])
+        with self.assertRaises(quota.HistoricalCandleQuotaError) as caught:
+            load(symbol='US.TEST')
+        self.assertEqual(caught.exception.code, 'HISTORICAL_CANDLE_QUOTA_EXHAUSTED')
+        ctx.close.assert_called_once()
 
 
 if __name__ == '__main__': unittest.main()

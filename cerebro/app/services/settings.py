@@ -381,6 +381,16 @@ DEFINITIONS = {
     "metrics.minimum_history_bars": {
         "section": "Data & Quality", "subsection": "History", "label": "Minimum Usable Metric History", "type": "integer", "default": 60, "min": 20, "max": 500
     },
+    "history.chart_quota_reserve": {
+        "section": "Quant & Discovery",
+        "subsection": "Run Size",
+        "label": "Historical Candle Slots Reserved for Charts",
+        "type": "integer",
+        "default": 10,
+        "min": 0,
+        "max": 1000,
+        "description": "Stop automatic history downloads for new stocks at this remaining OpenD quota. Already-counted stocks and cached history remain usable. Set 0 to disable the reserve.",
+    },
     "history.minimum_completed_bars": {
         "section": "Data & Quality", "subsection": "History", "label": "Required Completed Bars", "type": "integer", "default": 300, "min": 60, "max": 1000
     },
