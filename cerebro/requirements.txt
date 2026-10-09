@@ -6,3 +6,7 @@ moomoo-api
 openai
 
 exchange-calendars>=4.11,<5
+
+numpy>=2,<3
+# Optional for pattern DataFrame helpers; the broker SDK already requires pandas.
+# pandas>=2,<4
