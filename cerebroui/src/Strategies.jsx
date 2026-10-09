@@ -17,6 +17,7 @@ import {
 import "./AIEngine.css";
 import CollapsibleSection from "./CollapsibleSection";
 import WorkflowEvent from "./WorkflowEvent";
+import DecisionInput from "./DecisionInput";
 import { brokerAction } from "./TradingControls";
 import { RESOLVED_STATUSES, confirmationMatches, batchTotals } from "./decisionActions";
 
@@ -475,6 +476,13 @@ export default function Strategies() {
           </>
         )}
       </CollapsibleSection>
+
+      <DecisionInput
+        runId={runId}
+        available={Boolean(progress?.decision_input_available || bundle?.ai?.request_snapshot)}
+        snapshot={bundle?.run_id === runId ? bundle?.ai?.request_snapshot : null}
+        status={progress?.status || (bundle?.ai?.decision ? "COMPLETE" : "IDLE")}
+      />
 
       {researchErrors.length > 0 && (
         <CollapsibleSection

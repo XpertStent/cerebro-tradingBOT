@@ -87,6 +87,14 @@ def get_decision_result(run_id: str):
     return decorate_reviews(data)
 
 
+@router.get("/input/{run_id}")
+def get_decision_input(run_id: str):
+    data = ai_decision_jobs.decision_input(run_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="No captured decision input is available for this run")
+    return data
+
+
 @router.get("/latest")
 def get_latest_decision():
     return decorate_reviews({"result": ai_decision_jobs.latest()})
@@ -107,6 +115,7 @@ def clear_latest_decision():
 def clear_ai_history_for_testing():
     with resolution_lock(), EXECUTION_LOCK:
         result = ai_history_reset.clear_all()
+        ai_decision_jobs.clear_decision_inputs()
     activity.write(
         category="AI",
         action="AI_HISTORY_CLEARED",

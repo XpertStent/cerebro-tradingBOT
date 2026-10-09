@@ -8,7 +8,7 @@ from app.services.ai_decision import ai_decision
 from app.services.ai_execution import ai_execution
 from app.services.ai_memory import ai_memory
 from app.services.ai_run_context import ai_run_context
-from app.services.latest_ai_decision import latest_ai_decision
+from app.services.latest_ai_decision import latest_ai_decision, latest_decision_input
 from app.services.latest_quant import latest_quant
 from app.services.proposal_review import resolution_lock
 from app.services.quant_screener import quant_screener
@@ -74,6 +74,7 @@ class AIDecisionJobManager:
             "started_at": None,
             "finished_at": None,
             "events": [],
+            "decision_input_available": False,
             "quant": {
                 "stage": "QUEUED",
                 "percent": 0.0,
@@ -222,6 +223,30 @@ class AIDecisionJobManager:
                 f"Research batch retry {values.get('attempt')}/{values.get('max_attempts')} in {values.get('delay_seconds')}s",
                 kind="INFO",
             )
+
+    def _capture_decision_input(self, run_id, snapshot):
+        # Only the JSON request body is captured; client credentials stay outside it.
+        latest_decision_input.save(run_id=run_id, result=snapshot)
+        with self._lock:
+            job = self._jobs.get(run_id)
+            if job:
+                job["decision_input"] = deepcopy(snapshot)
+                job["decision_input_available"] = True
+
+    def decision_input(self, run_id):
+        with self._lock:
+            job = self._jobs.get(run_id)
+            if job and job.get("decision_input"):
+                return {"run_id": run_id, "snapshot": deepcopy(job["decision_input"])}
+        captured = latest_decision_input.load()
+        if captured and captured.get("run_id") == run_id:
+            return {"run_id": run_id, "snapshot": captured["result"]}
+        stored = latest_ai_decision.load()
+        if stored and stored.get("run_id") == run_id:
+            snapshot = ((stored.get("result") or {}).get("ai") or {}).get("request_snapshot")
+            if snapshot:
+                return {"run_id": run_id, "snapshot": snapshot}
+        return None
 
     def _decision_retry_progress(self, run_id, **values):
         with self._lock:
@@ -395,6 +420,7 @@ class AIDecisionJobManager:
                     enrich_research=enrich_research,
                     context=context,
                     retry_callback=lambda **kwargs: self._decision_retry_progress(run_id, **kwargs),
+                    request_callback=lambda snapshot: self._capture_decision_input(run_id, snapshot),
                 )
                 self._event(
                     run_id,
@@ -503,8 +529,7 @@ class AIDecisionJobManager:
             job = self._jobs.get(run_id)
             if not job:
                 return None
-            data = deepcopy(job)
-        data.pop("result", None)
+            data = deepcopy({k: v for k, v in job.items() if k not in {"result", "decision_input"}})
         started = data.get("started_at")
         finished = data.get("finished_at")
         data["elapsed_seconds"] = round((finished or self._now()) - started, 1) if started else 0.0
@@ -536,18 +561,40 @@ class AIDecisionJobManager:
             ]
             if active:
                 newest = max(active, key=lambda item: float(item.get("created_at") or 0))
-                data = deepcopy(newest)
-                data.pop("result", None)
+                data = deepcopy({k: v for k, v in newest.items() if k not in {"result", "decision_input"}})
                 started = data.get("started_at")
                 if started:
                     data["elapsed_seconds"] = round(self._now() - started, 1)
                 return data
-        return latest_ai_decision.load()
+        stored = latest_ai_decision.load()
+        captured = latest_decision_input.load()
+        if captured and (not stored or captured.get("run_id") != stored.get("run_id")):
+            # A failed/interrupted request remains inspectable after reload/restart.
+            run_id = captured["run_id"]
+            progress = self.progress(run_id)
+            return progress or {
+                "run_id": run_id,
+                "status": "INPUT_CAPTURED",
+                "stage": "REQUEST_CAPTURED",
+                "decision_input_available": True,
+                "message": "Decision input captured; no completed result is available for this run.",
+            }
+        return stored
 
     def clear_latest(self):
         with resolution_lock():
             latest_ai_decision.delete()
+            latest_decision_input.delete()
+            self.clear_decision_inputs()
         return {"cleared": True}
+
+    def clear_decision_inputs(self):
+        with self._lock:
+            for job in self._jobs.values():
+                job.pop("decision_input", None)
+                job["decision_input_available"] = False
+                ai = (job.get("result") or {}).get("ai") or {}
+                ai.pop("request_snapshot", None)
 
     def approve(self, run_id):
         from app.api.ai_decision import _legacy_batch

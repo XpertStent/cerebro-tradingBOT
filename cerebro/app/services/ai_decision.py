@@ -1,5 +1,6 @@
 import json
 import time
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from openai import OpenAI
@@ -272,33 +273,37 @@ Return only the requested structured result.
         web_search_enabled,
         search_context_size,
         retry_callback=None,
+        request_callback=None,
     ):
         """Run the single portfolio-decision request with rate-limit recovery."""
         max_attempts = 4
+        kwargs = {
+            "model": model,
+            "reasoning": {"effort": reasoning_effort},
+            "input": prompt,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "cerebro_portfolio_decisions",
+                    "strict": True,
+                    "schema": DECISION_SCHEMA,
+                }
+            },
+        }
+        if web_search_enabled:
+            kwargs.update({
+                "tools": [{
+                    "type": "web_search",
+                    "search_context_size": search_context_size,
+                }],
+                "tool_choice": "required",
+                "include": ["web_search_call.action.sources"],
+            })
+        # Capture the same body once. Retries reuse it even if settings change.
+        if request_callback:
+            request_callback(deepcopy(kwargs))
         for attempt in range(1, max_attempts + 1):
             try:
-                kwargs = {
-                    "model": model,
-                    "reasoning": {"effort": reasoning_effort},
-                    "input": prompt,
-                    "text": {
-                        "format": {
-                            "type": "json_schema",
-                            "name": "cerebro_portfolio_decisions",
-                            "strict": True,
-                            "schema": DECISION_SCHEMA,
-                        }
-                    },
-                }
-                if web_search_enabled:
-                    kwargs.update({
-                        "tools": [{
-                            "type": "web_search",
-                            "search_context_size": search_context_size,
-                        }],
-                        "tool_choice": "required",
-                        "include": ["web_search_call.action.sources"],
-                    })
                 return self._client().responses.create(**kwargs)
             except Exception as exc:
                 if attempt >= max_attempts or not is_retryable_openai_error(exc):
@@ -346,6 +351,7 @@ Return only the requested structured result.
         enrich_research=True,
         context=None,
         retry_callback=None,
+        request_callback=None,
     ):
         if context is None:
             context = ai_run_context.build(
@@ -353,6 +359,8 @@ Return only the requested structured result.
                 enrich_research=enrich_research,
             )
 
+        # This normalized copy is both the prompt's JSON and the inspector view.
+        context = json.loads(json.dumps(context, ensure_ascii=False, default=str))
         candidates = context.get("candidates") or []
         if not candidates:
             raise RuntimeError("Decision context contains no candidates")
@@ -362,6 +370,22 @@ Return only the requested structured result.
         web_search_enabled = settings.get_bool("ai.decision.web_search_enabled")
         search_context_size = str(settings.get("ai.decision.search_context_size"))
 
+        request_snapshot = None
+
+        def capture_request(request):
+            nonlocal request_snapshot
+            instructions, _, tail = request["input"].partition("\n\nCEREBRO CONTEXT:\n")
+            final_instruction = tail.rsplit("\n\n", 1)[-1]
+            request_snapshot = {
+                "schema_version": 1,
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "request": request,
+                "context": deepcopy(context),
+                "instructions": instructions + "\n\n" + final_instruction,
+            }
+            if request_callback:
+                request_callback(deepcopy(request_snapshot))
+
         response = self._request_with_retry(
             model=model,
             reasoning_effort=reasoning_effort,
@@ -369,6 +393,7 @@ Return only the requested structured result.
             web_search_enabled=web_search_enabled,
             search_context_size=search_context_size,
             retry_callback=retry_callback,
+            request_callback=capture_request,
         )
 
         result = self._validate(context, json.loads(response.output_text))
@@ -387,6 +412,7 @@ Return only the requested structured result.
                 **web_usage,
             },
             "context": context,
+            "request_snapshot": request_snapshot,
             "decision": result,
             "execution": {
                 "attempted": False,
