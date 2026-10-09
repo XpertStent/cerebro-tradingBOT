@@ -9,11 +9,13 @@ import {
   ScrollText,
   Settings as SettingsIcon,
   CircleDollarSign,
-  Star
+  Star,
+  ShieldAlert
 } from "lucide-react";
 
 import "./style.css";
 import "./AppPolish.css";
+import "./LiveTrading.css";
 import Markets from "./Markets";
 import Orders from "./Orders";
 import Portfolio from "./Portfolio";
@@ -22,6 +24,7 @@ import Strategies from "./Strategies";
 import Watchlist from "./Watchlist";
 import Settings from "./Settings";
 import CollapsibleSection from "./CollapsibleSection";
+import TradingControls from "./TradingControls";
 
 const nav = [
   ["Dashboard", LayoutDashboard, "dashboard"],
@@ -48,6 +51,11 @@ function money(value) {
     style: "currency",
     currency: "USD"
   }).format(value);
+}
+
+function maskedAccount(account) {
+  if (!account) return "—";
+  return account.account_id_masked || `••••${String(account.account_id || "").slice(-4)}`;
 }
 
 function App() {
@@ -80,8 +88,8 @@ function App() {
       ]);
 
       if (s.ok) setSystem(await s.json());
-      if (p.ok) setPortfolio(await p.json());
-      if (o.ok) setOrders(await o.json());
+      if (p.ok) setPortfolio(await p.json()); else setPortfolio(null);
+      if (o.ok) setOrders(await o.json()); else setOrders({ orders: [] });
     } catch (e) {
       console.error(e);
     }
@@ -121,14 +129,21 @@ function App() {
   }, []);
 
   const ready = system?.status === "READY";
+  const live = String(system?.trading?.mode || "").toUpperCase() === "LIVE";
   const openOrders = orders?.orders?.filter(
     o => !["FILLED_ALL", "CANCELLED_ALL", "CANCELED_ALL", "FAILED", "DELETED"].includes(
       String(o.status || "").toUpperCase()
     )
   ).length ?? 0;
 
+  function updateTradingStatus(tradingState) {
+    if (!tradingState) return;
+    setSystem(previous => previous ? ({ ...previous, trading: { ...(previous.trading || {}), ...tradingState } }) : previous);
+    refresh();
+  }
+
   return (
-    <div className="app">
+    <div className={`app ${live ? "liveModeApp" : "paperModeApp"}`}>
       <aside className="sidebar">
         <button className="brand brandButton" onClick={() => navigate("Dashboard")} aria-label="Open dashboard">
           <CircleDollarSign size={27}/>
@@ -161,14 +176,31 @@ function App() {
         <header>
           <div>
             <h1>{activePage}</h1>
-            <p>Cerebro simulated-trading control centre</p>
+            <p>Cerebro {live ? "live-trading" : "paper-trading"} control centre</p>
           </div>
 
-          <div className={`statusPill ${ready ? "ready" : "bad"}`}>
-            <span className="dot"></span>
-            {ready ? "System Ready" : "System Unavailable"}
+          <div className="headerRightCluster">
+            <TradingControls onStatus={updateTradingStatus}/>
+            <div className={`statusPill ${ready ? "ready" : "bad"}`}>
+              <span className="dot"></span>
+              {ready ? "System Ready" : "System Unavailable"}
+            </div>
           </div>
         </header>
+
+        {live && (
+          <div className={`liveTradingBanner ${system?.trading?.unlocked ? "unlocked" : "locked"}`}>
+            <ShieldAlert size={17}/>
+            <div>
+              <strong>LIVE account {maskedAccount(system?.trading?.account)}</strong>
+              <span>
+                {system?.trading?.unlocked
+                  ? "Real-money broker actions are unlocked. Every order still passes deterministic Cerebro risk validation before submission."
+                  : "Real-money broker actions are locked. A BUY, SELL, cancel, or AI execution attempt will pause and request an unlock."}
+              </span>
+            </div>
+          </div>
+        )}
 
         {activePage === "Dashboard" ? (
           <Dashboard system={system} portfolio={portfolio} orders={orders} openOrders={openOrders}/>
@@ -195,19 +227,22 @@ function App() {
 function Dashboard({ system, portfolio, orders, openOrders }) {
   const account = portfolio?.account;
   const positions = portfolio?.positions ?? [];
-  const latestOrder = orders?.orders?.length ? orders.orders[0] : null;
+  const matchingOrders = (orders?.orders || []).filter(order => String(order.account_id) === String(account?.account_id) && order.mode === account?.mode && order.security_firm === account?.security_firm);
+  const latestOrder = matchingOrders.at(-1) || null;
+  const mode = String(system?.trading?.mode || account?.mode || "PAPER").toUpperCase();
+  const live = mode === "LIVE";
 
   return (
     <div className="dashboardSections">
-      <CollapsibleSection title="System Overview" subtitle="Broker, market-data and account readiness.">
+      <CollapsibleSection title="System Overview" subtitle="Broker, market-data and current account readiness.">
         <section className="statusGrid">
           <StatusCard label="System" value={system?.status ?? "Loading"} good={system?.status === "READY"}/>
           <StatusCard label="OpenD" value={system?.opend?.connected ? "Connected" : "Disconnected"} good={system?.opend?.connected}/>
           <StatusCard label="Market Data" value={system?.market_data?.status ?? "Loading"} good={system?.market_data?.status === "READY"}/>
           <StatusCard
             label="Trading"
-            value={system ? `${system.trading.mode} · ${system.trading.enabled ? "Enabled" : "Disabled"}` : "Loading"}
-            good={system?.trading?.enabled}
+            value={system ? `${mode} · ${system.trading.enabled ? "Enabled" : "Disabled"}` : "Loading"}
+            good={system?.trading?.enabled && (!live || Boolean(system?.trading?.account))}
           />
         </section>
         <section className="metricGrid">
@@ -219,8 +254,11 @@ function Dashboard({ system, portfolio, orders, openOrders }) {
       </CollapsibleSection>
 
       <div className="lowerGrid">
-        <CollapsibleSection title="Portfolio" subtitle="Current paper-account summary." actions={<span className="paperBadge">{account?.mode ?? "—"}</span>}>
+        <CollapsibleSection title="Portfolio" subtitle={`Current ${mode.toLowerCase()} account summary.`} actions={<span className={live ? "liveBadge" : "paperBadge"}>{mode}</span>}>
           <div className="rows">
+            <Row label="OpenD trading ID" value={maskedAccount(account)}/>
+            <Row label="Moomoo app account" value={account?.universal_account_masked || "—"}/>
+            <Row label="Broker" value={account?.security_firm || system?.trading?.account?.security_firm || "—"}/>
             <Row label="Total value" value={money(account?.total_value)}/>
             <Row label="Cash" value={money(account?.cash)}/>
             <Row label="Market value" value={money(account?.market_value)}/>
@@ -228,17 +266,20 @@ function Dashboard({ system, portfolio, orders, openOrders }) {
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Recent Order" subtitle="Most recently reported broker order.">
+        <CollapsibleSection title="Latest Broker Order" subtitle="OpenD order history (up to 90 days). Historical orders are not new trade notifications.">
+          {orders?.history?.history_stale && <p>History refresh unavailable. Saved broker records may be stale.</p>}
           {latestOrder ? (
             <button className="order orderButton" onClick={() => window.dispatchEvent(new CustomEvent("cerebro-open-market", { detail: { symbol: latestOrder.symbol, name: latestOrder.name } }))}>
               <div>
                 <strong>{latestOrder.side} {latestOrder.quantity} {latestOrder.symbol}</strong>
                 <span>{latestOrder.name}</span>
+                <span>{latestOrder.created_at || "Date unavailable"} · New York · {latestOrder.mode} · API ••••{String(latestOrder.account_id).slice(-4)}</span>
+                <span>Filled: {latestOrder.filled_quantity ?? "—"} · Source: {latestOrder.source || "OpenD"}</span>
               </div>
               <div className="orderStatus">{latestOrder.status}</div>
             </button>
           ) : (
-            <div className="empty">No orders yet</div>
+            <div className="empty">No broker orders returned for this account.</div>
           )}
         </CollapsibleSection>
       </div>

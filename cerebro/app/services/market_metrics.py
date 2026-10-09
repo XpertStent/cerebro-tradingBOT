@@ -1,10 +1,17 @@
 import math
 
-from app.services.opend import opend
+from app.services.market_data import market_data
 from app.services.settings import settings
 
 
 class MarketMetrics:
+
+    @staticmethod
+    def _trade_date(value):
+        text = str(value or "")
+        if len(text) == 8 and text.isdigit():
+            return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+        return None
 
     def build(
         self,
@@ -16,13 +23,13 @@ class MarketMetrics:
             count = 260
 
         if candles is None:
-            candles = opend.get_candles(
-                symbol=symbol,
-                timeframe="1d",
-                count=count,
-            )
-            if isinstance(candles, dict):
-                candles = candles.get("candles") or candles.get("data") or []
+            history = market_data.completed_history(symbol, minimum_bars=int(settings.get("history.minimum_completed_bars")))
+            if not history["usable"]:
+                return {"symbol":symbol,"available":False,"skip_reason":history["skip_reason"],
+                        "data_quality":{k:v for k,v in history.items() if k != "candles"}}
+            result = self.build(symbol, candles=history["candles"])
+            result["data_quality"] = {k:v for k,v in history.items() if k != "candles"}
+            return result
 
         if not candles:
             return {
@@ -42,7 +49,8 @@ class MarketMetrics:
             if close is not None:
                 rows.append({
                     "date": (
-                        row.get("date")
+                        self._trade_date(row.get("trade_date"))
+                        or row.get("date")
                         or row.get("time")
                         or row.get("datetime")
                         or row.get("time_key")

@@ -24,7 +24,7 @@ function payloadValue(item, value) {
   return value;
 }
 
-function SettingControl({ item, value, onChange }) {
+function SettingControl({ item, value, onChange, disabled }) {
   const id = `setting-${item.key.replaceAll(".", "-")}`;
 
   if (item.type === "boolean") {
@@ -34,7 +34,7 @@ function SettingControl({ item, value, onChange }) {
           id={id}
           type="checkbox"
           checked={Boolean(value)}
-          disabled={item.read_only}
+          disabled={disabled || item.read_only}
           onChange={e => onChange(e.target.checked)}
         />
         <span className="toggleTrack"><span /></span>
@@ -48,11 +48,11 @@ function SettingControl({ item, value, onChange }) {
       <select
         id={id}
         value={value ?? ""}
-        disabled={item.read_only}
+        disabled={disabled || item.read_only}
         onChange={e => onChange(e.target.value)}
       >
         {(item.options || []).map(option => (
-          <option key={option} value={option}>{option}</option>
+          <option key={option} value={option}>{item.option_labels?.[option] || option}</option>
         ))}
       </select>
     );
@@ -65,8 +65,11 @@ function SettingControl({ item, value, onChange }) {
           id={id}
           type="password"
           value={value ?? ""}
-          placeholder={item.configured ? "Configured — enter to replace" : "Enter API key"}
+          placeholder={item.configured ? "Configured — enter to replace" : `Enter ${item.label}`}
           autoComplete="new-password"
+          autoCapitalize="none"
+          spellCheck={false}
+          disabled={disabled || item.read_only}
           onChange={e => onChange(e.target.value)}
         />
         <span className={item.configured ? "configured" : "notConfigured"}>
@@ -89,7 +92,7 @@ function SettingControl({ item, value, onChange }) {
         min={numeric ? min : undefined}
         max={numeric ? max : undefined}
         step={item.type === "integer" ? 1 : item.weight_group ? 1 : "any"}
-        disabled={item.read_only}
+        disabled={disabled || item.read_only}
         onChange={e => onChange(
           item.weight_group
             ? Number(e.target.value) / 100
@@ -101,7 +104,7 @@ function SettingControl({ item, value, onChange }) {
   );
 }
 
-function SettingRow({ item, value, onChange }) {
+function SettingRow({ item, value, onChange, disabled }) {
   return (
     <div className={`settingRow ${item.future ? "futureSetting" : ""}`}>
       <div className="settingCopy">
@@ -114,7 +117,7 @@ function SettingRow({ item, value, onChange }) {
         <code>{item.key}</code>
       </div>
       <div className="settingControlWrap">
-        <SettingControl item={item} value={value} onChange={onChange} />
+        <SettingControl item={item} value={value} onChange={onChange} disabled={disabled} />
       </div>
     </div>
   );
@@ -214,7 +217,10 @@ export default function Settings() {
   }
 
   async function resetSection() {
-    if (!window.confirm(`Reset all ${activeSection} settings to defaults?`)) return;
+    const prompt = activeSection === "API KEYS"
+      ? "Clear all saved API keys? Environment-configured credentials, if any, will still be used."
+      : `Reset all ${activeSection} settings to defaults?`;
+    if (!window.confirm(prompt)) return;
     setSaving(true);
     try {
       const response = await fetch("/api/settings/reset", {
@@ -272,7 +278,7 @@ export default function Settings() {
           </div>
           <div className="settingsActions">
             <button className="secondaryButton" onClick={resetSection} disabled={saving}>
-              <RotateCcw size={16} /> Reset section
+              <RotateCcw size={16} /> {activeSection === "API KEYS" ? "Clear saved keys" : "Reset section"}
             </button>
             <button className="primaryButton" onClick={save} disabled={saving || dirty.size === 0}>
               <Save size={16} /> {saving ? "Saving…" : "Save changes"}
@@ -287,12 +293,12 @@ export default function Settings() {
           </div>
         )}
 
-        {activeSection === "AI & Models" && (
+        {activeSection === "API KEYS" && (
           <div className="settingsNotice">
             <ShieldCheck size={19} />
             <div>
               <strong>Credentials stay masked.</strong>
-              <span>The API key is never returned to the browser. Research and decision models are intentionally separate.</span>
+              <span>Saved credentials are never returned to the browser. Enter a new value to replace a key, or leave its field blank to keep the existing value.</span>
             </div>
           </div>
         )}
@@ -330,6 +336,7 @@ export default function Settings() {
                       item={item}
                       value={values[item.key]}
                       onChange={value => change(item, value)}
+                      disabled={saving}
                     />
                   ))}
                 </div>

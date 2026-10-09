@@ -78,6 +78,26 @@ class AIThesisStore:
                     WHERE status = 'ACTIVE'
                 """)
 
+    def repair_unapproved_theses(self):
+        """Retain historical proposals, but undo their accidental ACTIVE promotion."""
+        with _lock, self._connect() as conn:
+            invalid = conn.execute("""SELECT t.id, t.symbol FROM ai_theses t JOIN ai_decisions d
+                ON d.id=t.entry_decision_id WHERE t.status='ACTIVE' AND t.strategy='AI_PORTFOLIO'
+                AND COALESCE(d.execution_status, '') NOT IN ('APPROVED', 'EXECUTED')""").fetchall()
+            for row in invalid:
+                conn.execute("""UPDATE ai_theses SET status='INVALIDATED', closed_at=?,
+                    closing_reason='Unapproved proposal was activated by an older build'
+                    WHERE id=?""", (self._now(), row["id"]))
+                previous = conn.execute("""SELECT t.id FROM ai_theses t JOIN ai_decisions d
+                    ON d.id=t.entry_decision_id WHERE t.symbol=? AND t.status='CLOSED'
+                    AND t.closing_reason='Replaced by new thesis' AND t.closing_decision_id IS NULL
+                    AND d.execution_status IN ('APPROVED', 'EXECUTED') ORDER BY t.id DESC LIMIT 1""", (row["symbol"],)).fetchone()
+                if previous:
+                    conn.execute("UPDATE ai_theses SET status='ACTIVE', closed_at=NULL, closing_reason=NULL WHERE id=?", (previous["id"],))
+            conn.execute("""UPDATE ai_decisions SET thesis_status=NULL
+                WHERE thesis_status='ACTIVE' AND strategy='AI_PORTFOLIO'
+                AND COALESCE(execution_status, '') NOT IN ('APPROVED', 'EXECUTED')""")
+
     def replace_active(self, *, symbol, thesis, strategy=None, invalidation=None,
                        entry_decision_id=None):
         symbol = symbol.upper()

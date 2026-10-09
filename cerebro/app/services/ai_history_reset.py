@@ -2,7 +2,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from app.services.latest_ai_decision import latest_ai_decision
+from app.services.latest_ai_decision import latest_ai_decision, latest_decision_input
 
 
 DB_PATH = Path("/data/cerebro.db")
@@ -48,6 +48,7 @@ class AIHistoryResetService:
                 conn.close()
 
         latest_ai_decision.delete()
+        latest_decision_input.delete()
         return {
             "cleared": True,
             "deleted": deleted,

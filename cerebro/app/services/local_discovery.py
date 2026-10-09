@@ -103,6 +103,9 @@ class LocalDiscovery:
             market_cap = self._num(row.get("market_cap"))
             previous_close = self._num(row.get("previous_close"))
 
+            if row.get("quote_fresh") is False:
+                continue
+
             if price is None or price < min_price:
                 continue
             if market_cap is None or market_cap < min_market_cap:

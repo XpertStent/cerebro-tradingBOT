@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
   BrainCircuit,
   CheckCircle2,
@@ -17,6 +16,11 @@ import {
 
 import "./AIEngine.css";
 import CollapsibleSection from "./CollapsibleSection";
+import WorkflowEvent from "./WorkflowEvent";
+import DecisionInput from "./DecisionInput";
+import ResearchOutput from "./ResearchOutput";
+import { brokerAction } from "./TradingControls";
+import { RESOLVED_STATUSES, confirmationMatches, batchTotals } from "./decisionActions";
 
 function fmtScore(value) {
   const n = Number(value);
@@ -65,6 +69,10 @@ export default function Strategies() {
   const [busy, setBusy] = useState(false);
   const [decisionBusyId, setDecisionBusyId] = useState(null);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [armedAction, setArmedAction] = useState(null);
+  const [rejectionReasons, setRejectionReasons] = useState({});
+  const [bulkReview, setBulkReview] = useState(null);
+  const [bulkReason, setBulkReason] = useState("");
   const [message, setMessage] = useState(null);
   const [selectedResearchSymbol, setSelectedResearchSymbol] = useState(null);
 
@@ -81,7 +89,7 @@ export default function Strategies() {
   const researchSymbols = progress?.ai?.research_symbols || {};
   const liveResearchDetails = progress?.ai?.research_details || {};
   const events = progress?.events || [];
-  const decisionContext = bundle?.ai?.context || {};
+  const decisionContext = bundle?.run_id === runId ? bundle?.ai?.context || {} : {};
   const researchBatchCount = decisionContext?.run?.research_parallel_batches;
   const decisionWebResearch = progress?.ai?.decision_web_research || bundle?.ai?.decision_web_research;
 
@@ -179,97 +187,65 @@ export default function Strategies() {
   }
 
   async function actOne(proposal, action) {
-    if (!runId || !proposal?.decision_id) return;
-    const isWatch = proposal.action === "WATCH";
-    if (action === "approve") {
-      const ok = window.confirm(
-        isWatch
-          ? `Approve ${proposal.symbol} as a WATCH? It will be added to Monitored Securities and included in future AI decision runs.`
-          : `Approve only ${proposal.symbol} and submit its PAPER order? No other AI decision will be approved.`
-      );
-      if (!ok) return;
+    if (!runId || !proposal?.decision_id || batchBusy || decisionBusyId != null) return;
+    const reason = action === "reject" ? (rejectionReasons[proposal.decision_id] || "").trim() : "";
+    if (!confirmationMatches(armedAction, proposal, action, reason)) {
+      setArmedAction({ decisionId: proposal.decision_id, action, reviewKey: proposal.review_key, reason });
+      return;
     }
-
+    setArmedAction(null);
     setDecisionBusyId(proposal.decision_id);
     setMessage(null);
     try {
-      const response = await fetch(
+      const response = await brokerAction(
         `/api/ai/decision/${encodeURIComponent(runId)}/proposal/${encodeURIComponent(proposal.decision_id)}/${action}`,
-        { method: "POST" }
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ review_key: proposal.review_key, ...(action === "reject" ? { reason } : {}) }) }
       );
       const data = await response.json();
-      if (!response.ok) {
-        throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
-      }
+      if (!response.ok) throw new Error(data.detail?.message || (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)));
       setBundle(data);
-      setMessage({
-        kind: "ok",
-        text: action === "approve"
-          ? (isWatch
-              ? `${proposal.symbol} approved for monitoring and added to Monitored Securities.`
-              : `${proposal.symbol} approved and execution attempted. Other decisions were unchanged.`)
-          : (isWatch
-              ? `${proposal.symbol} WATCH rejected; the watchlist was unchanged.`
-              : `${proposal.symbol} rejected. Other decisions were unchanged.`)
-      });
-      await refreshResult(runId);
+      setRejectionReasons(previous => { const next = { ...previous }; delete next[proposal.decision_id]; return next; });
+      setMessage({ kind: "ok", text: `${proposal.symbol} ${action === "approve" ? "approved" : "rejected"} and removed from pending actions.` });
     } catch (error) {
       setMessage({ kind: "error", text: error.message });
+      await refreshResult(runId);
     } finally {
       setDecisionBusyId(null);
     }
   }
 
-  async function actAll(action) {
-    if (!runId || pendingProposals.length === 0) return;
-    const mix = [
-      pendingOrderCount ? `${pendingOrderCount} broker action${pendingOrderCount === 1 ? "" : "s"}` : null,
-      pendingWatchCount ? `${pendingWatchCount} watch action${pendingWatchCount === 1 ? "" : "s"}` : null
-    ].filter(Boolean).join(" and ");
-    const ok = window.confirm(
-      action === "approve"
-        ? `Approve ALL ${pendingProposals.length} remaining AI decisions (${mix})? Broker actions are revalidated individually; WATCH actions are added to Monitored Securities.`
-        : `Reject ALL ${pendingProposals.length} remaining AI decisions (${mix})? No broker orders or watchlist additions will be made for them.`
-    );
-    if (!ok) return;
+  function actAll(action) {
+    if (!runId || pendingProposals.length === 0 || batchBusy || decisionBusyId != null) return;
+    setArmedAction(null);
+    setBulkReason("");
+    setBulkReview({ action, runId, proposals: structuredClone(pendingProposals), context: bundle?.execution?.execution_context });
+  }
 
+  async function confirmAll() {
+    if (!bulkReview || batchBusy) return;
+    const reviewed = bulkReview;
     setBatchBusy(true);
     setMessage(null);
-    const failures = [];
-    let completed = 0;
-
     try {
-      for (const proposal of pendingProposals) {
-        if (!proposal?.decision_id) {
-          failures.push(`${proposal?.symbol || "Unknown"}: missing decision id`);
-          continue;
-        }
-        try {
-          const response = await fetch(
-            `/api/ai/decision/${encodeURIComponent(runId)}/proposal/${encodeURIComponent(proposal.decision_id)}/${action}`,
-            { method: "POST" }
-          );
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
-          }
-          completed += 1;
-          setBundle(data);
-        } catch (error) {
-          failures.push(`${proposal.symbol}: ${error.message}`);
-        }
-      }
-      await refreshResult(runId);
-      setMessage(failures.length ? {
-        kind: "error",
-        text: `${completed}/${pendingProposals.length} completed. ${failures.length} failed: ${failures.join(" | ")}`
-      } : {
-        kind: "ok",
-        text: action === "approve"
-          ? `All ${completed} remaining decisions were approved. Broker actions passed through final PAPER checks and WATCH actions were added to Monitored Securities.`
-          : `All ${completed} remaining decisions were rejected. No orders or watchlist additions were made.`
+      const response = await brokerAction(`/api/ai/decision/${encodeURIComponent(reviewed.runId)}/${reviewed.action}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposals: reviewed.proposals.map(p => ({ decision_id: p.decision_id, review_key: p.review_key })),
+          ...(reviewed.action === "reject" ? { reason: bulkReason.trim() } : {}) })
       });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail?.message || (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)));
+      setBundle(data);
+      const completed = data.batch_resolution?.completed_ids?.length || 0;
+      const failures = data.batch_resolution?.failures || [];
+      setMessage({ kind: failures.length ? "error" : "ok", text: `${completed}/${reviewed.proposals.length} actions ${reviewed.action === "approve" ? "approved" : "rejected"}.` +
+        (failures.length ? ` Remaining actions stay pending: ${failures.map(f => `Decision ${f.decision_id}: ${f.message}`).join(" | ")}` : "") });
+    } catch (error) {
+      setMessage({ kind: "error", text: error.message });
+      await refreshResult(reviewed.runId);
     } finally {
+      setBulkReview(null);
+      setBulkReason("");
       setBatchBusy(false);
     }
   }
@@ -327,6 +303,12 @@ export default function Strategies() {
   useEffect(() => { loadLatest(); }, []);
 
   useEffect(() => {
+    setArmedAction(null);
+    setBulkReview(null);
+    setRejectionReasons({});
+  }, [runId, bundle?.execution?.execution_context?.context_id]);
+
+  useEffect(() => {
     if (!runId) return;
     let cancelled = false;
     let timer = null;
@@ -364,6 +346,9 @@ export default function Strategies() {
       ? "complete"
       : progress?.status ? "running" : "";
 
+  const visibleDecisions = decisions.filter(item => !RESOLVED_STATUSES.has(proposalBySymbol.get(item.symbol)?.status));
+  const bulkTotals = batchTotals(bulkReview?.proposals || []);
+
   const bulkDecisionFooter = !autoExecuted && pendingCount > 0 && ["MANUAL", "MANUAL_PARTIAL"].includes(approvalMode) ? (
     <div className="aiPerDecisionActions aiBatchDecisionActions">
       <button className="aiDanger" disabled={batchBusy || decisionBusyId != null} onClick={() => actAll("reject")}>
@@ -383,19 +368,19 @@ export default function Strategies() {
           <p>Quant → clustered research → independent decision-model web verification → deterministic risk → approval.</p>
         </div>
         <div className="aiHeroActions">
-          <button className="aiPrimary" onClick={startManualRun} disabled={busy || running}>
+          <button className="aiPrimary" onClick={startManualRun} disabled={busy || running || batchBusy || decisionBusyId != null}>
             <Play size={15}/>{running ? "Running…" : "Run AI Decision"}
           </button>
-          <button className="aiSecondary" onClick={loadLatest} disabled={busy || running}>
+          <button className="aiSecondary" onClick={loadLatest} disabled={busy || running || batchBusy || decisionBusyId != null}>
             <RefreshCw size={15}/>Refresh
           </button>
-          <button className="aiDanger" onClick={() => clearStored("quant")} disabled={busy || running}>
+          <button className="aiDanger" onClick={() => clearStored("quant")} disabled={busy || running || batchBusy || decisionBusyId != null}>
             <Trash2 size={14}/>Clear Quant
           </button>
-          <button className="aiDanger" onClick={() => clearStored("ai")} disabled={busy || running}>
+          <button className="aiDanger" onClick={() => clearStored("ai")} disabled={busy || running || batchBusy || decisionBusyId != null}>
             <Trash2 size={14}/>Clear AI Result
           </button>
-          <button className="aiDanger strongDanger" onClick={clearAllHistory} disabled={busy || running}>
+          <button className="aiDanger strongDanger" onClick={clearAllHistory} disabled={busy || running || batchBusy || decisionBusyId != null}>
             <Eraser size={14}/>Clear All AI History
           </button>
         </div>
@@ -443,18 +428,14 @@ export default function Strategies() {
 
       <CollapsibleSection
         title="Live Workflow Activity"
-        subtitle="Operational events from quant, research, model and risk stages."
+        subtitle="Operational events from quant, research, model and risk stages. Click a historical analysis item for candle details."
         defaultOpen={running}
         bodyClassName="scrollRegion compact"
       >
         {events.length === 0 ? <div className="aiEmpty">No live workflow events yet.</div> : (
           <div className="aiEventList">
-            {events.slice().reverse().map((event, index) => (
-              <div className={`aiEvent ${event.kind === "ERROR" ? "error" : event.kind === "SUCCESS" ? "success" : ""}`} key={`${event.at}-${index}`}>
-                <Activity size={14}/>
-                <div><strong>{event.stage}</strong><span>{event.message}</span></div>
-                <time>{new Date(event.at).toLocaleTimeString()}</time>
-              </div>
+            {events.slice().reverse().map(event => (
+              <WorkflowEvent event={event} key={`${runId || progress?.run_id}-${event.id || `${event.at}-${event.stage}-${event.symbol || event.message}`}`}/>
             ))}
           </div>
         )}
@@ -490,12 +471,20 @@ export default function Strategies() {
                   </div>
                   <button className="aiSecondary" onClick={() => setSelectedResearchSymbol(null)}>Close detail</button>
                 </div>
-                <pre>{pretty(selectedResearch)}</pre>
+                <ResearchOutput key={`${runId}:${selectedResearchSymbol}`} runId={runId}
+                  symbol={selectedResearchSymbol} detail={selectedResearch} />
               </div>
             )}
           </>
         )}
       </CollapsibleSection>
+
+      <DecisionInput
+        runId={runId}
+        available={Boolean(progress?.decision_input_available || bundle?.ai?.request_snapshot)}
+        snapshot={bundle?.run_id === runId ? bundle?.ai?.request_snapshot : null}
+        status={progress?.status || (bundle?.ai?.decision ? "COMPLETE" : "IDLE")}
+      />
 
       {researchErrors.length > 0 && (
         <CollapsibleSection
@@ -567,9 +556,9 @@ export default function Strategies() {
         bodyClassName="scrollRegion"
         footer={bulkDecisionFooter}
       >
-        {decisions.length === 0 ? <div className="aiEmpty">No AI decision result yet.</div> : (
+        {visibleDecisions.length === 0 ? <div className="aiEmpty">{bundle ? "No unresolved decisions remain. Reviewed decisions are retained in AI memory." : "No AI decision result yet."}</div> : (
           <div className="aiDecisionList">
-            {decisions.map(item => {
+            {visibleDecisions.map(item => {
               const proposal = proposalBySymbol.get(item.symbol);
               const candidate = candidateBySymbol.get(item.symbol);
               const research = candidate?.research_context;
@@ -619,13 +608,21 @@ export default function Strategies() {
                         )}
 
                         {canDecide && (
-                          <div className="aiPerDecisionActions">
-                            <button className="aiDanger" disabled={proposalBusy || batchBusy} onClick={() => actOne(proposal, "reject")}>
-                              <XCircle size={15}/>{proposalBusy ? "Working…" : (isWatch ? "Reject Watch" : "Reject this decision")}
+                          <div className="aiDecisionReview">
+                            <label className="aiRejectionReason">Optional rejection reason
+                              <textarea maxLength={1000} value={rejectionReasons[proposal.decision_id] || ""}
+                                disabled={decisionBusyId != null || batchBusy}
+                                placeholder="Why would you reject this decision?"
+                                onChange={event => { setRejectionReasons(previous => ({ ...previous, [proposal.decision_id]: event.target.value })); setArmedAction(null); }} />
+                            </label>
+                            <div className="aiPerDecisionActions">
+                            <button className="aiDanger" disabled={decisionBusyId != null || batchBusy || busy} onClick={() => actOne(proposal, "reject")}>
+                              <XCircle size={15}/>{proposalBusy ? "Working…" : confirmationMatches(armedAction, proposal, "reject", (rejectionReasons[proposal.decision_id] || "").trim()) ? "Click again to confirm" : (isWatch ? "Reject Watch" : "Reject this decision")}
                             </button>
-                            <button className="aiPrimary" disabled={proposalBusy || batchBusy} onClick={() => actOne(proposal, "approve")}>
-                              <CheckCircle2 size={15}/>{proposalBusy ? "Working…" : (isWatch ? "Approve & Monitor" : "Approve & Execute this order")}
+                            <button className="aiPrimary" disabled={decisionBusyId != null || batchBusy || busy} onClick={() => actOne(proposal, "approve")}>
+                              <CheckCircle2 size={15}/>{proposalBusy ? "Working…" : confirmationMatches(armedAction, proposal, "approve") ? "Click again to confirm" : (isWatch ? "Approve & Monitor" : "Approve & Execute this order")}
                             </button>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -637,6 +634,32 @@ export default function Strategies() {
           </div>
         )}
       </CollapsibleSection>
+      {bulkReview && (
+        <div className="aiReviewOverlay">
+          <section className="aiReviewDialog" role="dialog" aria-modal="true" aria-labelledby="batch-review-title">
+            <h3 id="batch-review-title">Review all actions to {bulkReview.action}</h3>
+            <p>{bulkReview.context?.environment || "Unknown environment"} · Account {bulkReview.context?.account_id_masked || "unavailable"}</p>
+            <p>{bulkReview.action === "approve" ? "Broker orders will be submitted after fresh risk checks. Market prices are estimates. WATCH adds monitoring." : "These decisions will be marked USER_REJECTED. No orders will be submitted."}</p>
+            <div className="aiReviewTableWrap"><table className="aiQuantTable">
+              <thead><tr><th>Symbol</th><th>Action</th><th>Quantity</th><th>Price</th><th>Estimated amount</th></tr></thead>
+              <tbody>{bulkReview.proposals.map(p => <tr key={p.decision_id}>
+                <td>{p.symbol}</td><td>{p.action}{p.order ? ` · ${p.order.order_type}` : ""}</td>
+                <td>{p.order?.quantity ?? "—"}</td>
+                <td>{p.order ? `$${Number(p.order.price ?? p.order.estimated_price).toFixed(2)}${p.order.price == null ? " (est.)" : " (limit)"}` : "—"}</td>
+                <td>{p.order ? `$${(Number(p.order.quantity) * Number(p.order.price ?? p.order.estimated_price)).toFixed(2)}` : "Monitoring"}</td>
+              </tr>)}</tbody>
+            </table></div>
+            <p>Estimated BUY ${bulkTotals.BUY.toFixed(2)} · SELL ${bulkTotals.SELL.toFixed(2)}</p>
+            {bulkReview.action === "reject" && <label className="aiRejectionReason">Optional rejection reason (applies to every listed decision)
+              <textarea maxLength={1000} value={bulkReason} disabled={batchBusy} onChange={event => setBulkReason(event.target.value)} />
+            </label>}
+            <div className="aiPerDecisionActions">
+              <button className="aiSecondary" disabled={batchBusy} onClick={() => setBulkReview(null)}>Cancel</button>
+              <button className={bulkReview.action === "approve" ? "aiPrimary" : "aiDanger"} disabled={batchBusy} onClick={confirmAll}>{batchBusy ? "Working…" : "Confirm"}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

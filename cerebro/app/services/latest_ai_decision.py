@@ -57,3 +57,4 @@ class LatestAIDecisionStore:
 
 
 latest_ai_decision = LatestAIDecisionStore()
+latest_decision_input = LatestAIDecisionStore("/data/latest_decision_input.json")

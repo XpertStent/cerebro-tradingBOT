@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import CollapsibleSection from "./CollapsibleSection";
 import "./OrdersEnhancements.css";
+import "./LiveTrading.css";
 
 function money(value) {
   if (value === null || value === undefined) return "—";
@@ -47,6 +48,7 @@ export default function Portfolio() {
       if (!r.ok) throw new Error(d.detail || "Unable to load portfolio");
       setPortfolio(d);
     } catch (e) {
+      setPortfolio(null);
       setError(e.message);
     } finally {
       setLoading(false);
@@ -63,6 +65,10 @@ export default function Portfolio() {
   const positions = portfolio?.positions || [];
   const unrealized = account?.unrealized_pnl;
   const realized = account?.realized_pnl;
+  const positionPnl = account?.position_pnl;
+  const equityChange = account?.daily_pnl;
+  const mode = String(account?.mode || "PAPER").toUpperCase();
+  const live = mode === "LIVE";
 
   return (
     <div className="portfolioPage">
@@ -70,17 +76,25 @@ export default function Portfolio() {
 
       <CollapsibleSection
         title="Portfolio Overview"
-        subtitle="Current account state reported through Cerebro."
+        subtitle={`Current ${mode.toLowerCase()} account state reported directly through OpenD.`}
         actions={
           <div className="portfolioActions">
-            <span className="portfolioMode">{account?.mode || "PAPER"}</span>
+            <span className={live ? "liveBadge" : "portfolioMode"}>{mode}</span>
             <button className="portfolioRefresh" onClick={() => loadPortfolio(true)}>
-              <RefreshCw size={16}/>
-              Refresh
+              <RefreshCw size={16}/>Refresh
             </button>
           </div>
         }
       >
+        {account && (
+          <div className="previewAccountGrid">
+            <div className="previewAccountCard"><span>OpenD trading ID</span><strong>{account.account_id_masked || `••••${String(account.account_id || "").slice(-4)}`}</strong></div>
+            <div className="previewAccountCard"><span>Moomoo app account</span><strong>{account.universal_account_masked || "—"}</strong></div>
+            <div className="previewAccountCard"><span>Broker</span><strong>{account.security_firm || "—"}</strong></div>
+            <div className="previewAccountCard"><span>Available funds (USD, cash-only)</span><strong>{money(account.available_cash)}</strong></div>
+          </div>
+        )}
+
         <section className="portfolioMetrics">
           <MetricCard icon={<Landmark size={20}/>} label="Total Value" value={money(account?.total_value)}/>
           <MetricCard icon={<Wallet size={20}/>} label="Cash" value={money(account?.cash)}/>
@@ -90,23 +104,29 @@ export default function Portfolio() {
 
         <section className="pnlGrid">
           <div className="pnlCard">
-            <span>Unrealized P&L</span>
-            <strong className={unrealized > 0 ? "positive" : unrealized < 0 ? "negative" : ""}>
-              {money(unrealized)}
-            </strong>
+            <span>Position P&L</span>
+            <strong className={positionPnl > 0 ? "positive" : positionPnl < 0 ? "negative" : ""}>{money(positionPnl)}</strong>
+          </div>
+          <div className="pnlCard">
+            <span>Unrealized P&L (average cost)</span>
+            <strong className={unrealized > 0 ? "positive" : unrealized < 0 ? "negative" : ""}>{money(unrealized)}</strong>
           </div>
           <div className="pnlCard">
             <span>Realized P&L</span>
-            <strong className={realized > 0 ? "positive" : realized < 0 ? "negative" : ""}>
-              {money(realized)}
-            </strong>
+            <strong className={realized > 0 ? "positive" : realized < 0 ? "negative" : ""}>{money(realized)}</strong>
+          </div>
+          <div className="pnlCard">
+            <span>Equity change since first observation today</span>
+            <strong className={equityChange > 0 ? "positive" : equityChange < 0 ? "negative" : ""}>{money(equityChange)}</strong>
           </div>
         </section>
+        {live && <p>Position P&L is the total reported for current US holdings. Realized P&L is unavailable without verified closed-trade history. Equity change includes market moves and cash transfers.</p>}
+        {live && account && <p>USD cash buying power: {money(account.cash_buying_power)}. Available funds use the lower of USD cash and cash buying power; margin is excluded. {!account.funds_verified && "Funds could not be verified; new BUY orders are blocked."}</p>}
       </CollapsibleSection>
 
       <CollapsibleSection
         title="Positions"
-        subtitle="Current holdings. Use View to open full market details and charts."
+        subtitle={`Current ${mode.toLowerCase()} holdings. Use View to open full market details and charts.`}
         actions={<span className="positionCount">{positions.length}</span>}
         bodyClassName="scrollRegion"
       >
@@ -114,45 +134,28 @@ export default function Portfolio() {
           <table className="positionsTable">
             <thead>
               <tr>
-                <th>Security</th>
-                <th>Qty</th>
-                <th>Available</th>
-                <th>Avg Cost</th>
-                <th>Current</th>
-                <th>Market Value</th>
-                <th>P&L</th>
-                <th>P&L %</th>
-                <th>Action</th>
+                <th>Security</th><th>Qty</th><th>Available</th><th>Avg Cost</th><th>Current</th><th>Market Value</th><th title="Position market value divided by total account value, including cash">Portfolio %</th><th>P&L</th><th>P&L %</th><th>Action</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="9" className="positionsEmpty">Loading portfolio…</td></tr>
+                <tr><td colSpan="10" className="positionsEmpty">Loading portfolio…</td></tr>
               ) : positions.length === 0 ? (
-                <tr><td colSpan="9" className="positionsEmpty">No open positions</td></tr>
+                <tr><td colSpan="10" className="positionsEmpty">No open positions</td></tr>
               ) : (
                 positions.map(position => (
                   <tr key={position.symbol}>
-                    <td>
-                      <strong>{position.symbol}</strong>
-                      <span>{position.name}</span>
-                    </td>
+                    <td><strong>{position.symbol}</strong><span>{position.name}</span></td>
                     <td>{position.quantity}</td>
                     <td>{position.available_quantity}</td>
                     <td>{money(position.average_cost)}</td>
                     <td>{money(position.current_price)}</td>
                     <td>{money(position.market_value)}</td>
-                    <td className={position.profit_loss > 0 ? "positive" : position.profit_loss < 0 ? "negative" : ""}>
-                      {money(position.profit_loss)}
-                    </td>
-                    <td className={position.profit_loss_percent > 0 ? "positive" : position.profit_loss_percent < 0 ? "negative" : ""}>
-                      {percent(position.profit_loss_percent)}
-                    </td>
+                    <td>{percent(account?.total_value > 0 && position.market_value != null ? 100 * position.market_value / account.total_value : null)}</td>
+                    <td className={position.profit_loss > 0 ? "positive" : position.profit_loss < 0 ? "negative" : ""}>{money(position.profit_loss)}</td>
+                    <td className={position.profit_loss_percent > 0 ? "positive" : position.profit_loss_percent < 0 ? "negative" : ""}>{percent(position.profit_loss_percent)}</td>
                     <td>
-                      <button className="openSecurityButton" onClick={() => openMarket(position)}>
-                        <ExternalLink size={14}/>
-                        View
-                      </button>
+                      <button className="openSecurityButton" onClick={() => openMarket(position)}><ExternalLink size={14}/>View</button>
                     </td>
                   </tr>
                 ))
@@ -169,10 +172,7 @@ function MetricCard({ icon, label, value }) {
   return (
     <div className="portfolioMetric">
       <div className="portfolioMetricIcon">{icon}</div>
-      <div>
-        <span>{label}</span>
-        <strong>{value}</strong>
-      </div>
+      <div><span>{label}</span><strong>{value}</strong></div>
     </div>
   );
 }

@@ -9,7 +9,10 @@ import {
 } from "lucide-react";
 
 import CollapsibleSection from "./CollapsibleSection";
+import useSymbolSearch from "./useSymbolSearch";
+import { brokerAction } from "./TradingControls";
 import "./OrdersEnhancements.css";
+import "./LiveTrading.css";
 
 const TERMINAL_ORDER_STATES = new Set([
   "FILLED_ALL",
@@ -28,54 +31,88 @@ function openMarket(symbol, name = "") {
   );
 }
 
+function money(value) {
+  if (value === null || value === undefined) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD"
+  }).format(Number(value));
+}
+
+function detailMessage(data, fallback) {
+  if (typeof data?.detail === "string") return data.detail;
+  if (data?.detail?.message) return data.detail.message;
+  if (data?.detail) return JSON.stringify(data.detail);
+  return fallback;
+}
+
 export default function Orders() {
   const [symbolSearch, setSymbolSearch] = useState("");
-  const [suggestions, setSuggestions] = useState([]);
+  const symbolLookup = useSymbolSearch(["US"], 8, 1);
+  const suggestions = symbolLookup.results;
   const [symbol, setSymbol] = useState(null);
   const [side, setSide] = useState("BUY");
   const [quantity, setQuantity] = useState("");
   const [orderType, setOrderType] = useState("MARKET");
   const [limitPrice, setLimitPrice] = useState("");
+  const [triggerPrice, setTriggerPrice] = useState("");
+  const [timeInForce, setTimeInForce] = useState("DAY");
+  const [ticketInfo, setTicketInfo] = useState(null);
+  const [ticketError, setTicketError] = useState(null);
   const [preview, setPreview] = useState(null);
   const [orders, setOrders] = useState([]);
+  const [history, setHistory] = useState(null);
+  const [trading, setTrading] = useState(null);
   const [loading, setLoading] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [cancellingId, setCancellingId] = useState(null);
   const [message, setMessage] = useState(null);
 
-  async function loadOrders() {
+  const mode = String(trading?.mode || preview?.mode || "PAPER").toUpperCase();
+  const live = mode === "LIVE";
+  const needsLimit = ["LIMIT", "STOP_LIMIT"].includes(orderType);
+  const needsTrigger = ["STOP", "STOP_LIMIT"].includes(orderType);
+
+  async function loadTrading() {
     try {
-      const r = await fetch("/api/orders/", { cache: "no-store" });
+      const r = await fetch("/api/trading/status", { cache: "no-store" });
+      if (r.ok) setTrading(await r.json());
+    } catch (_) {}
+  }
+
+  async function loadOrders(force = false) {
+    try {
+      const r = await fetch(`/api/orders/?refresh=${force}`, { cache: "no-store" });
       const d = await r.json();
-      if (r.ok) setOrders(d.orders || []);
+      if (r.ok) {
+        setOrders(d.orders || []);
+        setHistory(d.history);
+        if (d.mode) setTrading(previous => ({ ...(previous || {}), mode: d.mode }));
+      }
     } catch (_) {}
   }
 
   async function cancelOrder(order) {
     if (!order?.order_id) return;
+    const orderMode = String(order.mode || mode).toUpperCase();
     const ok = window.confirm(
-      `Cancel pending order ${order.order_id} for ${order.symbol}?`
+      orderMode === "LIVE"
+        ? `Cancel REAL broker order ${order.order_id} for ${order.symbol}?`
+        : `Cancel pending order ${order.order_id} for ${order.symbol}?`
     );
     if (!ok) return;
 
     setCancellingId(String(order.order_id));
     setMessage(null);
     try {
-      const r = await fetch(
+      const r = await brokerAction(
         `/api/orders/${encodeURIComponent(order.order_id)}`,
         { method: "DELETE" }
       );
       const d = await r.json();
-      if (!r.ok) {
-        throw new Error(
-          typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail)
-        );
-      }
-      setMessage({
-        type: "success",
-        text: `Order ${order.order_id} cancellation submitted.`
-      });
-      await loadOrders();
+      if (!r.ok) throw new Error(detailMessage(d, `Cancellation failed (${r.status})`));
+      setMessage({ type: "success", text: `${d.mode || orderMode} order ${order.order_id} cancellation submitted.` });
+      await Promise.all([loadOrders(), loadTrading()]);
     } catch (e) {
       setMessage({ type: "error", text: e.message });
     } finally {
@@ -83,59 +120,58 @@ export default function Orders() {
     }
   }
 
-  async function searchSymbols(value) {
-    const q = value.trim();
-    if (!q) {
-      setSuggestions([]);
-      return;
-    }
-    try {
-      const r = await fetch(
-        `/api/market/search?q=${encodeURIComponent(q)}&markets=US,HK,SH,SZ,SG,MY,JP&limit=8`,
-        { cache: "no-store" }
-      );
-      const d = await r.json();
-      if (r.ok) setSuggestions(d.results || []);
-    } catch (_) {
-      setSuggestions([]);
-    }
-  }
-
   function chooseSymbol(item) {
     setSymbol(item.symbol);
     setSymbolSearch(`${item.ticker} — ${item.name}`);
-    setSuggestions([]);
+    symbolLookup.clear();
     setPreview(null);
     setMessage(null);
   }
 
-  function orderPayload() {
+  function orderPayload({ forExecution = false } = {}) {
+    if (forExecution && preview) return {
+      ...preview.request_ticket,
+      preview_reference_price: Number(preview.estimated_price),
+      execution_intent_id: preview.execution_intent_id,
+      preview_context_id: preview.execution_context_id
+    };
     const payload = {
       symbol,
       side,
       quantity: Number(quantity),
       order_type: orderType
     };
-    if (orderType === "LIMIT") payload.price = Number(limitPrice);
+
+    if (needsLimit) payload.price = Number(limitPrice);
+    if (needsTrigger) payload.trigger_price = Number(triggerPrice);
+    payload.time_in_force = live ? timeInForce : "DAY";
+
     return payload;
   }
 
   async function previewOrder() {
     setLoading(true);
+    setPreview(null);
     setMessage(null);
+    const requestTicket = orderPayload();
     try {
       const r = await fetch("/api/orders/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderPayload())
+        body: JSON.stringify(requestTicket)
       });
       const d = await r.json();
-      if (!r.ok) {
-        throw new Error(
-          typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail)
-        );
-      }
-      setPreview(d);
+      if (!r.ok) throw new Error(detailMessage(d, `Preview failed (${r.status})`));
+      setPreview({
+        ...d,
+        request_ticket: requestTicket,
+        execution_intent_id:
+          d.execution_intent_id ||
+          (window.crypto?.randomUUID
+            ? window.crypto.randomUUID()
+            : `manual-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      });
+      setTrading(previous => ({ ...(previous || {}), mode: d.mode }));
     } catch (e) {
       setPreview(null);
       setMessage({ type: "error", text: e.message });
@@ -146,26 +182,30 @@ export default function Orders() {
 
   async function executeOrder() {
     if (!preview?.approved) return;
+    const previewMode = String(preview.mode || mode).toUpperCase();
+    if (previewMode === "LIVE") {
+      const ok = window.confirm(
+        `Submit a REAL ${preview.side} order for ${preview.quantity} ${preview.symbol}?\n\nType: ${preview.order_type} · ${preview.time_in_force}\nTrigger: ${money(preview.trigger_price)} · Limit: ${money(preview.requested_price)}\nEstimated value: ${money(preview.estimated_value)}\nAccount: ${preview.account?.account_id_masked || "LIVE"}\n\nThis uses real funds.`
+      );
+      if (!ok) return;
+    }
+
     setExecuting(true);
     setMessage(null);
     try {
-      const r = await fetch("/api/orders/execute", {
+      const r = await brokerAction("/api/orders/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderPayload())
+        body: JSON.stringify(orderPayload({ forExecution: true }))
       });
       const d = await r.json();
-      if (!r.ok) {
-        throw new Error(
-          typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail)
-        );
-      }
+      if (!r.ok) throw new Error(detailMessage(d, `Execution failed (${r.status})`));
       setMessage({
         type: "success",
-        text: `Paper order submitted successfully — Order ${d.order?.order_id ?? ""}`
+        text: `${d.mode || previewMode} order submitted successfully — Order ${d.order?.order_id ?? ""}`
       });
       setPreview(null);
-      await loadOrders();
+      await Promise.all([loadOrders(), loadTrading()]);
     } catch (e) {
       setMessage({ type: "error", text: e.message });
     } finally {
@@ -175,12 +215,51 @@ export default function Orders() {
 
   useEffect(() => {
     loadOrders();
-    const timer = setInterval(loadOrders, 10000);
+    loadTrading();
+    const timer = setInterval(() => {
+      loadOrders();
+      loadTrading();
+    }, 10000);
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    setPreview(null);
+    setTriggerPrice("");
+    setTimeInForce("DAY");
+    setOrderType("MARKET");
+  }, [mode, trading?.account?.account_id]);
+
+  useEffect(() => {
+    setTicketInfo(null);
+    setTicketError(null);
+    if (!live || !symbol || (needsLimit && !limitPrice) || (needsTrigger && !triggerPrice)) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      const params = new URLSearchParams({symbol, side, order_type: orderType, time_in_force: timeInForce});
+      if (needsLimit) params.set("price", limitPrice);
+      if (needsTrigger) params.set("trigger_price", triggerPrice);
+      try {
+        const response = await fetch(`/api/orders/ticket?${params}`, {cache:"no-store", signal:controller.signal});
+        const data = await response.json();
+        if (!response.ok) throw new Error(detailMessage(data, "Unable to verify broker quantity"));
+        if (!controller.signal.aborted) setTicketInfo(data);
+      } catch (error) {
+        if (!controller.signal.aborted) setTicketError(error.message);
+      }
+    }, 400);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [live, symbol, side, orderType, limitPrice, triggerPrice, timeInForce, trading?.account?.account_id]);
+
   const entryPanel = (
-    <>
+    <fieldset className="orderTicketFields" disabled={loading || executing}>
+      {live && (
+        <div className="liveOrderNotice">
+          <ShieldAlert size={18}/>
+          <span>LIVE mode is active. Preview uses the selected REAL account balance, holdings and risk limits. Execution requires OpenD trade unlock.</span>
+        </div>
+      )}
+
       <div className="orderField">
         <label>Security</label>
         <div className="orderSymbolSearch">
@@ -194,113 +273,97 @@ export default function Orders() {
               setPreview(null);
               setMessage(null);
               if (!value.trim()) {
-                setSuggestions([]);
+                symbolLookup.clear();
                 return;
               }
-              clearTimeout(window.__orderSearchTimer);
-              window.__orderSearchTimer = setTimeout(
-                () => searchSymbols(value),
-                200
-              );
+              symbolLookup.schedule(value);
             }}
-            onFocus={() => {
-              if (symbolSearch.trim()) searchSymbols(symbolSearch);
-            }}
+            onFocus={() => { if (!symbol && symbolSearch.trim()) symbolLookup.run(symbolSearch); }}
             placeholder="Search ticker or company"
           />
         </div>
 
+        {symbolLookup.searching && <small role="status">Searching symbols…</small>}
+        {symbolLookup.error && <small className="orderMessage error">{symbolLookup.error}</small>}
         {suggestions.length > 0 && (
           <div className="orderSuggestions">
             {suggestions.map(item => (
               <button key={item.symbol} onClick={() => chooseSymbol(item)}>
-                <div>
-                  <strong>{item.ticker}</strong>
-                  <span>{item.name}</span>
-                </div>
+                <div><strong>{item.ticker}</strong><span>{item.name}</span></div>
                 <small>{item.symbol}</small>
               </button>
             ))}
           </div>
         )}
 
-        {symbol && (
-          <div className="selectedSymbol">
-            Selected: <strong>{symbol}</strong>
-          </div>
-        )}
+        {symbol && <div className="selectedSymbol">Selected: <strong>{symbol}</strong></div>}
       </div>
 
       <div className="orderField">
         <label>Side</label>
         <div className="sideSelector">
-          <button
-            className={side === "BUY" ? "buy selected" : "buy"}
-            onClick={() => { setSide("BUY"); setPreview(null); }}
-          >
-            BUY
-          </button>
-          <button
-            className={side === "SELL" ? "sell selected" : "sell"}
-            onClick={() => { setSide("SELL"); setPreview(null); }}
-          >
-            SELL
-          </button>
+          <button className={side === "BUY" ? "buy selected" : "buy"} onClick={() => { setSide("BUY"); setPreview(null); }}>BUY</button>
+          <button className={side === "SELL" ? "sell selected" : "sell"} onClick={() => { setSide("SELL"); setPreview(null); }}>SELL</button>
         </div>
       </div>
 
       <div className="orderFormGrid">
         <div className="orderField">
           <label>Quantity</label>
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={quantity}
-            onChange={e => { setQuantity(e.target.value); setPreview(null); }}
-          />
+          <div className="quantityControls">
+            <button type="button" aria-label="Decrease quantity" onClick={() => {setQuantity(String(Math.max(1, Number(quantity || 1) - 1)));setPreview(null);}}>−</button>
+            <input type="number" min="1" step="1" value={quantity} onChange={e => { setQuantity(e.target.value); setPreview(null); }}/>
+            <button type="button" aria-label="Increase quantity" onClick={() => {setQuantity(String(Number(quantity || 0) + 1));setPreview(null);}}>+</button>
+          </div>
         </div>
         <div className="orderField">
           <label>Order Type</label>
-          <select
-            value={orderType}
-            onChange={e => { setOrderType(e.target.value); setPreview(null); }}
-          >
+          <select value={orderType} onChange={e => { setOrderType(e.target.value); setPreview(null); }}>
             <option value="MARKET">Market</option>
             <option value="LIMIT">Limit</option>
+            {live && <option value="STOP">Stop</option>}
+            {live && <option value="STOP_LIMIT">Stop Limit</option>}
           </select>
         </div>
       </div>
 
-      {orderType === "LIMIT" && (
+      {needsLimit && (
         <div className="orderField">
           <label>Limit Price</label>
-          <input
-            type="number"
-            step="0.01"
-            value={limitPrice}
-            onChange={e => { setLimitPrice(e.target.value); setPreview(null); }}
-            placeholder="Enter limit price"
-          />
+          <input type="number" step="0.01" value={limitPrice} onChange={e => { setLimitPrice(e.target.value); setPreview(null); }} placeholder="Enter limit price"/>
         </div>
       )}
 
-      <button
-        className="previewButton"
-        onClick={previewOrder}
-        disabled={loading || !symbol || !quantity || (orderType === "LIMIT" && !limitPrice)}
-      >
-        {loading ? "Checking..." : "Preview Order"}
+      {live && needsTrigger && <div className="orderField">
+        <label>Trigger Price</label>
+        <input type="number" min="0.001" step="0.001" value={triggerPrice} onChange={e => {setTriggerPrice(e.target.value);setPreview(null);}} placeholder="Price that activates the order"/>
+        <small>BUY trigger must be above the current price; SELL trigger must be below it.</small>
+      </div>}
+      {live && <div className="orderField">
+        <label>Time-in-Force</label>
+        <select value={timeInForce} onChange={e => {setTimeInForce(e.target.value);setPreview(null);}}>
+          <option value="DAY">Day</option><option value="GTC">Good Till Cancelled</option>
+        </select>
+        <small>Regular-session orders. Stop orders can fill at a different price; stop-limit orders may remain unfilled.</small>
+      </div>}
+      {live && <div className="previewSummary">
+        <PreviewRow label="Current price" value={money(ticketInfo?.quote_price)}/>
+        <PreviewRow label="Estimated amount" value={ticketInfo && quantity ? money(Number(quantity) * ticketInfo.ticket.estimated_price) : "—"}/>
+        <PreviewRow label={side === "BUY" ? "Max quantity to buy (cash)" : "Max quantity to sell"} value={ticketInfo?.maximum?.maximum ?? "—"}/>
+        {ticketError && <p className="orderMessage error">{ticketError}</p>}
+        <small>Cash maximum is estimated by OpenD at the ticket’s reference price and checked again before submission.</small>
+      </div>}
+
+      <button className="previewButton" onClick={previewOrder} disabled={loading || !symbol || !quantity || (needsLimit && !limitPrice) || (needsTrigger && !triggerPrice)}>
+        {loading ? "Checking..." : `Preview ${mode} Order`}
       </button>
 
-      {message && (
-        <div className={`orderMessage ${message.type}`}>{message.text}</div>
-      )}
-    </>
+      {message && <div className={`orderMessage ${message.type}`}>{message.text}</div>}
+    </fieldset>
   );
 
   const riskPanel = !preview ? (
-    <div className="riskEmpty">Preview an order to run the risk engine.</div>
+    <div className="riskEmpty">Preview an order to run the risk engine against the current {mode} account.</div>
   ) : (
     <>
       <div className={preview.approved ? "riskDecision approved" : "riskDecision blocked"}>
@@ -311,32 +374,37 @@ export default function Orders() {
         </div>
       </div>
 
+      <div className="previewAccountGrid">
+        <div className="previewAccountCard"><span>Account</span><strong>{preview.account?.account_id_masked || "—"}</strong></div>
+        <div className="previewAccountCard"><span>Portfolio value</span><strong>{money(preview.account?.total_value)}</strong></div>
+        <div className="previewAccountCard"><span>Available funds</span><strong>{money(preview.account?.available_cash)}</strong></div>
+      </div>
+
       <div className="previewSummary">
         <PreviewRow label="Security" value={preview.symbol}/>
         <PreviewRow label="Side" value={preview.side}/>
+        <PreviewRow label="Order type" value={preview.order_type}/>
+        <PreviewRow label="Time-in-force" value={preview.time_in_force}/>
+        <PreviewRow label="Trigger price" value={money(preview.trigger_price)}/>
+        <PreviewRow label="Limit price" value={money(preview.requested_price)}/>
         <PreviewRow label="Quantity" value={preview.quantity}/>
-        <PreviewRow label="Estimated Price" value={`$${Number(preview.estimated_price).toFixed(2)}`}/>
-        <PreviewRow label="Estimated Value" value={`$${Number(preview.estimated_value).toFixed(2)}`}/>
+        <PreviewRow label="Estimated Price" value={money(preview.estimated_price)}/>
+        <PreviewRow label="Estimated Value" value={money(preview.estimated_value)}/>
+        <PreviewRow label="Projected Cash" value={money(preview.projected?.cash)}/>
+        <PreviewRow label="Effective Order Limit" value={money(preview.limits?.effective_max_order_value)}/>
       </div>
 
       <div className="riskChecks">
         {preview.risk_checks?.map(check => (
           <div key={check.name} className={check.passed ? "riskCheck pass" : "riskCheck fail"}>
             <span className="riskCheckDot"></span>
-            <div>
-              <strong>{check.name.replaceAll("_", " ")}</strong>
-              <p>{check.message}</p>
-            </div>
+            <div><strong>{check.name.replaceAll("_", " ")}</strong><p>{check.message}</p></div>
           </div>
         ))}
       </div>
 
-      <button
-        className="executeButton"
-        disabled={!preview.approved || executing}
-        onClick={executeOrder}
-      >
-        {executing ? "Submitting..." : preview.approved ? "Execute Paper Order" : "Execution Blocked"}
+      <button className="executeButton" disabled={!preview.approved || executing} onClick={executeOrder}>
+        {executing ? "Submitting..." : preview.approved ? `Execute ${preview.mode} Order` : "Execution Blocked"}
       </button>
     </>
   );
@@ -346,69 +414,50 @@ export default function Orders() {
       <div className="ordersTwoColumn">
         <CollapsibleSection
           title="New Order"
-          subtitle="Preview through Cerebro risk controls before execution."
-          actions={<span className="paperBadge">PAPER</span>}
+          subtitle="Preview against the active account and deterministic risk controls before execution."
+          actions={<span className={live ? "liveBadge" : "paperBadge"}>{mode}</span>}
         >
           {entryPanel}
         </CollapsibleSection>
 
-        <CollapsibleSection
-          title="Risk Preview"
-          subtitle="Cerebro makes the final execution decision."
-        >
+        <CollapsibleSection title="Risk Preview" subtitle="Cerebro re-reads account state and applies the final execution boundary.">
           {riskPanel}
         </CollapsibleSection>
       </div>
 
       <CollapsibleSection
         title="Order History"
-        subtitle="Paper account orders reported by OpenD. Open any security in Markets or cancel a pending order."
-        actions={
-          <button className="refreshOrders" onClick={loadOrders}>
-            <RefreshCw size={16}/>
-            Refresh
-          </button>
-        }
+        subtitle={`${mode} account orders reported by OpenD. Open a security in Markets or cancel a pending order.`}
+        actions={<button className="refreshOrders" onClick={() => Promise.all([loadOrders(true), loadTrading()])}><RefreshCw size={16}/>Refresh</button>}
         bodyClassName="ordersScrollable"
       >
+        <p>Source: OpenD · History saved locally and refreshed every 10 minutes · Times: New York. Last history refresh: {history?.history_refreshed_at || "Unavailable"}. {history?.history_stale && "Saved history may be stale; broker refresh failed."} Activity logs and previews are not broker executions.</p>
         <div className="ordersTableWrap">
           <table className="ordersTable">
             <thead>
               <tr>
-                <th>Symbol</th>
-                <th>Side</th>
-                <th>Type</th>
-                <th>Qty</th>
-                <th>Filled</th>
-                <th>Avg Fill</th>
-                <th>Status</th>
-                <th>Order ID</th>
-                <th>Action</th>
+                <th>Date (New York)</th><th>Account</th><th>Env</th><th>Symbol</th><th>Side</th><th>Type</th><th>Trigger</th><th>Limit</th><th>Expiry</th><th>Qty</th><th>Filled</th><th>Avg Fill</th><th>Status</th><th>Order ID</th><th>Action</th>
               </tr>
             </thead>
             <tbody>
               {orders.length === 0 ? (
-                <tr>
-                  <td colSpan="9" className="ordersEmpty">No orders yet</td>
-                </tr>
+                <tr><td colSpan="15" className="ordersEmpty">No {mode.toLowerCase()} orders yet</td></tr>
               ) : (
                 orders.slice().reverse().map(order => {
-                  const terminal = TERMINAL_ORDER_STATES.has(
-                    String(order.status || "").toUpperCase()
-                  );
+                  const terminal = TERMINAL_ORDER_STATES.has(String(order.status || "").toUpperCase());
                   const cancelling = cancellingId === String(order.order_id);
+                  const orderMode = String(order.mode || mode).toUpperCase();
                   return (
                     <tr key={order.order_id}>
-                      <td>
-                        <strong>{order.symbol}</strong>
-                        <span>{order.name}</span>
-                      </td>
-                      <td>
-                        <span className={order.side === "BUY" ? "sideBuy" : "sideSell"}>
-                          {order.side}
-                        </span>
-                      </td>
-                      <td>{order.order_type}</td>
+                      <td>{order.created_at || "—"}</td>
+                      <td>••••{String(order.account_id).slice(-4)}</td>
+                      <td><span className={`orderEnvironmentBadge ${orderMode === "LIVE" ? "live" : ""}`}>{orderMode}</span></td>
+                      <td><strong>{order.symbol}</strong><span>{order.name}</span></td>
+                      <td><span className={order.side === "BUY" ? "sideBuy" : "sideSell"}>{order.side}</span></td>
+                      <td>{order.order_type === "NORMAL" ? "LIMIT" : order.order_type}</td>
+                      <td>{money(order.trigger_price)}</td>
+                      <td>{["NORMAL", "LIMIT", "STOP_LIMIT"].includes(order.order_type) ? money(order.price) : "—"}</td>
+                      <td>{order.time_in_force || "—"}</td>
                       <td>{order.quantity}</td>
                       <td>{order.filled_quantity}</td>
                       <td>{Number(order.filled_average_price || 0).toFixed(2)}</td>
@@ -416,23 +465,12 @@ export default function Orders() {
                       <td>{order.order_id}</td>
                       <td>
                         <div className="orderActionGroup">
-                          <button
-                            className="openSecurityButton"
-                            onClick={() => openMarket(order.symbol, order.name)}
-                            title={`Open ${order.symbol} in Markets`}
-                          >
-                            <ExternalLink size={14}/>
-                            View
+                          <button className="openSecurityButton" onClick={() => openMarket(order.symbol, order.name)} title={`Open ${order.symbol} in Markets`}>
+                            <ExternalLink size={14}/>View
                           </button>
                           {!terminal ? (
-                            <button
-                              className="cancelOrderButton"
-                              disabled={cancelling}
-                              onClick={() => cancelOrder(order)}
-                              title="Cancel pending order"
-                            >
-                              <Trash2 size={14}/>
-                              {cancelling ? "Cancelling..." : "Cancel"}
+                            <button className="cancelOrderButton" disabled={cancelling} onClick={() => cancelOrder(order)} title="Cancel pending order">
+                              <Trash2 size={14}/>{cancelling ? "Cancelling..." : "Cancel"}
                             </button>
                           ) : null}
                         </div>
@@ -450,10 +488,5 @@ export default function Orders() {
 }
 
 function PreviewRow({ label, value }) {
-  return (
-    <div className="previewRow">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+  return <div className="previewRow"><span>{label}</span><strong>{value}</strong></div>;
 }

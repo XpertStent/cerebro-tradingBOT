@@ -41,6 +41,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_RESEARCH_MODEL: ${OPENAI_RESEARCH_MODEL:-gpt-5.6-luna}
       AI_RESEARCH_MAX_WORKERS: ${AI_RESEARCH_MAX_WORKERS:-12}
+      # Optional. In LIVE mode the UI unlock button uses this server-side MD5
+      # hash with OpenD. The raw trading credential is never required by CerebroUI.
+      MOOMOO_TRADING_PASSWORD_MD5: ${MOOMOO_TRADING_PASSWORD_MD5:-}
 
     volumes:
       - cerebro-data:/data

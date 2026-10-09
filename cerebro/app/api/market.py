@@ -4,6 +4,10 @@ import time
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.opend import opend
+from app.services.market_data import market_data
+from app.services.alpaca_data import MarketDataError
+from app.services.symbol_catalog import SymbolCatalogTimeout
+from app.services.history_quota import HistoricalCandleQuotaError
 
 
 router = APIRouter(prefix="/market", tags=["Market Data"])
@@ -23,7 +27,8 @@ def _cached_search(query, markets, limit):
 
     result = opend.search_symbols(query, markets=markets, limit=limit)
     with _search_cache_lock:
-        _search_cache[key] = (now, result)
+        if result:
+            _search_cache[key] = (time.monotonic(), result)
         if len(_search_cache) > _SEARCH_CACHE_MAX:
             oldest = sorted(_search_cache.items(), key=lambda item: item[1][0])
             for stale_key, _ in oldest[: len(_search_cache) - _SEARCH_CACHE_MAX]:
@@ -51,6 +56,8 @@ def search_market(
             "markets": selected_markets,
             "results": _cached_search(q, selected_markets, limit),
         }
+    except SymbolCatalogTimeout as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -63,7 +70,7 @@ def market_snapshots(
         requested = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
         if not requested:
             raise HTTPException(status_code=400, detail="At least one symbol is required")
-        return {"count": len(requested), "quotes": opend.get_snapshots(requested)}
+        return {"count": len(requested), "quotes": market_data.get_snapshots(requested)}
     except HTTPException:
         raise
     except Exception as exc:
@@ -74,10 +81,15 @@ def market_snapshots(
 def market_candles(
     symbol: str,
     timeframe: str = Query("1d", description="Supported: 1m, 5m, 15m, 30m, 60m, 1d, 1w"),
-    count: int = Query(100, ge=1, le=1000)
+    count: int = Query(100, ge=1, le=1000),
+    before: str | None = Query(None, description="Exclusive candle time in the market timezone")
 ):
     try:
-        return opend.get_candles(symbol=symbol, timeframe=timeframe, count=count)
+        return market_data.get_candles(symbol=symbol, timeframe=timeframe, count=count, before=before)
+    except HistoricalCandleQuotaError as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code, "message": str(exc)}) from exc
+    except MarketDataError as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -87,6 +99,6 @@ def market_candles(
 @router.get("/{symbol}")
 def market_snapshot(symbol: str):
     try:
-        return opend.get_snapshot(symbol)
+        return market_data.get_snapshot(symbol)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

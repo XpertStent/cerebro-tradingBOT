@@ -8,8 +8,9 @@ from app.services.ai_decision import ai_decision
 from app.services.ai_execution import ai_execution
 from app.services.ai_memory import ai_memory
 from app.services.ai_run_context import ai_run_context
-from app.services.latest_ai_decision import latest_ai_decision
+from app.services.latest_ai_decision import latest_ai_decision, latest_decision_input
 from app.services.latest_quant import latest_quant
+from app.services.proposal_review import resolution_lock
 from app.services.quant_screener import quant_screener
 from app.services.settings import settings
 
@@ -35,6 +36,7 @@ class AIDecisionJobManager:
                 return
             events = job.setdefault("events", [])
             events.append({
+                "id": uuid.uuid4().hex,
                 "at": self._iso_now(),
                 "stage": stage,
                 "kind": kind,
@@ -72,6 +74,7 @@ class AIDecisionJobManager:
             "started_at": None,
             "finished_at": None,
             "events": [],
+            "decision_input_available": False,
             "quant": {
                 "stage": "QUEUED",
                 "percent": 0.0,
@@ -116,6 +119,7 @@ class AIDecisionJobManager:
         return self.progress(run_id)
 
     def _quant_progress(self, run_id, **values):
+        history = values.pop("history_analysis", None)
         with self._lock:
             job = self._jobs.get(run_id)
             if not job:
@@ -130,8 +134,24 @@ class AIDecisionJobManager:
             job["percent"] = round(float(quant.get("percent") or 0) * 0.55, 1)
             job["message"] = quant.get("message") or job.get("message")
             current_symbol = quant.get("current_symbol")
+            if history:
+                # Update the same row so an open inspector survives live polling.
+                event_id = f"history:{history['role']}:{history['symbol']}"
+                events = job.setdefault("events", [])
+                event = next((item for item in events if item.get("id") == event_id), None)
+                if event is None:
+                    event = {"id": event_id, "at": self._iso_now(), "stage": "QUANT", "symbol": history["symbol"]}
+                    events.append(event)
+                    if len(events) > 250:
+                        del events[:-250]
+                status = history["status"]
+                event.update(
+                    kind="ERROR" if status == "ERROR" else "SUCCESS" if status == "ANALYSED" else "INFO",
+                    message=f"{'Benchmark' if history['role'] == 'BENCHMARK' else 'Historical'} analysis: {history['symbol']}",
+                    details=deepcopy(history),
+                )
 
-        if current_symbol and current_symbol != previous_symbol:
+        if not history and current_symbol and current_symbol != previous_symbol:
             self._event(run_id, "QUANT", f"Historical analysis: {current_symbol}", symbol=current_symbol)
 
     def _research_progress(self, run_id, **values):
@@ -162,6 +182,9 @@ class AIDecisionJobManager:
             })
             details = ai.setdefault("research_details", {})
             if symbol:
+                research_output = values.get("research_output")
+                if isinstance(research_output, dict) and research_output.get("symbol") == symbol:
+                    job.setdefault("research_outputs", {})[symbol] = deepcopy(research_output)
                 ai.setdefault("research_symbols", {})[symbol] = status or "COMPLETE"
                 details[symbol] = {
                     "symbol": symbol,
@@ -169,6 +192,7 @@ class AIDecisionJobManager:
                     "cache": values.get("cache"),
                     "batch_number": values.get("batch_number"),
                     "error": values.get("error"),
+                    "output_available": symbol in job.get("research_outputs", {}),
                 }
             elif status == "RETRY":
                 for batch_symbol in values.get("batch_symbols") or []:
@@ -203,6 +227,30 @@ class AIDecisionJobManager:
                 f"Research batch retry {values.get('attempt')}/{values.get('max_attempts')} in {values.get('delay_seconds')}s",
                 kind="INFO",
             )
+
+    def _capture_decision_input(self, run_id, snapshot):
+        # Only the JSON request body is captured; client credentials stay outside it.
+        latest_decision_input.save(run_id=run_id, result=snapshot)
+        with self._lock:
+            job = self._jobs.get(run_id)
+            if job:
+                job["decision_input"] = deepcopy(snapshot)
+                job["decision_input_available"] = True
+
+    def decision_input(self, run_id):
+        with self._lock:
+            job = self._jobs.get(run_id)
+            if job and job.get("decision_input"):
+                return {"run_id": run_id, "snapshot": deepcopy(job["decision_input"])}
+        captured = latest_decision_input.load()
+        if captured and captured.get("run_id") == run_id:
+            return {"run_id": run_id, "snapshot": captured["result"]}
+        stored = latest_ai_decision.load()
+        if stored and stored.get("run_id") == run_id:
+            snapshot = ((stored.get("result") or {}).get("ai") or {}).get("request_snapshot")
+            if snapshot:
+                return {"run_id": run_id, "snapshot": snapshot}
+        return None
 
     def _decision_retry_progress(self, run_id, **values):
         with self._lock:
@@ -376,6 +424,7 @@ class AIDecisionJobManager:
                     enrich_research=enrich_research,
                     context=context,
                     retry_callback=lambda **kwargs: self._decision_retry_progress(run_id, **kwargs),
+                    request_callback=lambda snapshot: self._capture_decision_input(run_id, snapshot),
                 )
                 self._event(
                     run_id,
@@ -442,7 +491,8 @@ class AIDecisionJobManager:
                 else:
                     result["execution"]["approval_mode"] = "MANUAL"
 
-                latest_ai_decision.save(run_id=run_id, result=result)
+                with resolution_lock():
+                    latest_ai_decision.save(run_id=run_id, result=result)
 
                 final_stage = "AWAITING_APPROVAL" if not proposal_bundle.get("auto_execute") else "COMPLETE"
                 final_message = (
@@ -483,8 +533,7 @@ class AIDecisionJobManager:
             job = self._jobs.get(run_id)
             if not job:
                 return None
-            data = deepcopy(job)
-        data.pop("result", None)
+            data = deepcopy({k: v for k, v in job.items() if k not in {"result", "decision_input", "research_outputs"}})
         started = data.get("started_at")
         finished = data.get("finished_at")
         data["elapsed_seconds"] = round((finished or self._now()) - started, 1) if started else 0.0
@@ -495,27 +544,34 @@ class AIDecisionJobManager:
             data["ai"]["model_elapsed_seconds"] = 0.0
         return data
 
+    def research_output(self, run_id, symbol):
+        symbol = str(symbol).upper()
+        with self._lock:
+            output = (self._jobs.get(run_id, {}).get("research_outputs") or {}).get(symbol)
+            if output is not None:
+                return {"run_id": run_id, "symbol": symbol, "output": deepcopy(output)}
+        # Completed results and captured decision inputs survive worker restarts.
+        stored = latest_ai_decision.load()
+        context = ((stored.get("result") or {}).get("ai") or {}).get("context") if stored and stored.get("run_id") == run_id else None
+        if context is None:
+            captured = latest_decision_input.load()
+            context = (captured.get("result") or {}).get("context") if captured and captured.get("run_id") == run_id else None
+        for candidate in (context or {}).get("candidates") or []:
+            if candidate.get("symbol") == symbol and candidate.get("research_context") is not None:
+                return {"run_id": run_id, "symbol": symbol, "output": deepcopy(candidate["research_context"])}
+        return None
+
     def result(self, run_id):
+        # The atomic persisted result is authoritative across API workers.
+        persisted = latest_ai_decision.load()
+        if persisted and persisted.get("run_id") == run_id:
+            return {"run_id": run_id, "status": "COMPLETE", "stage": "PERSISTED",
+                    "error": None, "result": deepcopy(persisted.get("result"))}
         with self._lock:
             job = self._jobs.get(run_id)
             if job:
-                return {
-                    "run_id": run_id,
-                    "status": job["status"],
-                    "stage": job["stage"],
-                    "error": job["error"],
-                    "result": deepcopy(job["result"]),
-                }
-
-        persisted = latest_ai_decision.load()
-        if persisted and persisted.get("run_id") == run_id:
-            return {
-                "run_id": run_id,
-                "status": "COMPLETE",
-                "stage": "PERSISTED",
-                "error": None,
-                "result": deepcopy(persisted.get("result")),
-            }
+                return {"run_id": run_id, "status": job["status"], "stage": job["stage"],
+                        "error": job["error"], "result": deepcopy(job["result"])}
         return None
 
     def latest(self):
@@ -526,87 +582,51 @@ class AIDecisionJobManager:
             ]
             if active:
                 newest = max(active, key=lambda item: float(item.get("created_at") or 0))
-                data = deepcopy(newest)
-                data.pop("result", None)
+                data = deepcopy({k: v for k, v in newest.items() if k not in {"result", "decision_input", "research_outputs"}})
                 started = data.get("started_at")
                 if started:
                     data["elapsed_seconds"] = round(self._now() - started, 1)
                 return data
-        return latest_ai_decision.load()
+        stored = latest_ai_decision.load()
+        captured = latest_decision_input.load()
+        if captured and (not stored or captured.get("run_id") != stored.get("run_id")):
+            # A failed/interrupted request remains inspectable after reload/restart.
+            run_id = captured["run_id"]
+            progress = self.progress(run_id)
+            return progress or {
+                "run_id": run_id,
+                "status": "INPUT_CAPTURED",
+                "stage": "REQUEST_CAPTURED",
+                "decision_input_available": True,
+                "message": "Decision input captured; no completed result is available for this run.",
+            }
+        return stored
 
     def clear_latest(self):
-        latest_ai_decision.delete()
+        with resolution_lock():
+            latest_ai_decision.delete()
+            latest_decision_input.delete()
+            self.clear_decision_inputs()
         return {"cleared": True}
 
+    def clear_decision_inputs(self):
+        with self._lock:
+            for job in self._jobs.values():
+                job.pop("decision_input", None)
+                job.pop("research_outputs", None)
+                for detail in (job.get("ai", {}).get("research_details") or {}).values():
+                    detail["output_available"] = False
+                job["decision_input_available"] = False
+                ai = (job.get("result") or {}).get("ai") or {}
+                ai.pop("request_snapshot", None)
+
     def approve(self, run_id):
-        payload = self.result(run_id)
-        if not payload or not payload.get("result"):
-            raise RuntimeError("AI run result not found")
+        from app.api.ai_decision import _legacy_batch
+        return _legacy_batch(run_id, "approve")
 
-        result = deepcopy(payload["result"])
-        execution = result.get("execution") or {}
-        if execution.get("approval_mode") != "MANUAL":
-            raise RuntimeError("This AI run is not awaiting manual approval")
-
-        updated = []
-        failures = 0
-        for proposal in execution.get("proposals") or []:
-            if proposal.get("status") == "PENDING_APPROVAL":
-                try:
-                    updated.append(ai_execution.approve(proposal))
-                except Exception as exc:
-                    failures += 1
-                    updated.append(self._execution_failed(proposal, exc))
-            else:
-                updated.append(proposal)
-
-        execution["proposals"] = updated
-        execution["approval_mode"] = "MANUAL_APPROVED"
-        execution["execution_failures"] = failures
-        result["execution"] = execution
-        latest_ai_decision.save(run_id=run_id, result=result)
-        self.update(
-            run_id,
-            stage="COMPLETE",
-            message=(
-                "AI decisions approved; eligible PAPER orders and watchlist actions applied"
-                if failures == 0
-                else f"AI decisions approved with {failures} application failure(s)"
-            ),
-            result=result,
-        )
-        self._event(run_id, "APPROVAL", "Manual decision approval submitted", kind="SUCCESS")
-        return result
-
-    def reject(self, run_id):
-        payload = self.result(run_id)
-        if not payload or not payload.get("result"):
-            raise RuntimeError("AI run result not found")
-
-        result = deepcopy(payload["result"])
-        execution = result.get("execution") or {}
-        if execution.get("approval_mode") != "MANUAL":
-            raise RuntimeError("This AI run is not awaiting manual approval")
-
-        updated = []
-        for proposal in execution.get("proposals") or []:
-            if proposal.get("status") == "PENDING_APPROVAL":
-                updated.append(ai_execution.reject(proposal))
-            else:
-                updated.append(proposal)
-
-        execution["proposals"] = updated
-        execution["approval_mode"] = "MANUAL_REJECTED"
-        result["execution"] = execution
-        latest_ai_decision.save(run_id=run_id, result=result)
-        self.update(
-            run_id,
-            stage="COMPLETE",
-            message="AI decisions rejected — no pending trade or watchlist actions were applied",
-            result=result,
-        )
-        self._event(run_id, "APPROVAL", "Manual decisions rejected; no pending AI actions applied")
-        return result
+    def reject(self, run_id, reason=None):
+        from app.api.ai_decision import _legacy_batch
+        return _legacy_batch(run_id, "reject", reason)
 
 
 ai_decision_jobs = AIDecisionJobManager()

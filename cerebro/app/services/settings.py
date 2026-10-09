@@ -42,16 +42,34 @@ DEFINITIONS = {
         "description": "Primary market for discovery and trading.",
     },
 
-    # OpenAI / models
+    # API credentials are grouped separately from model configuration.
     "openai.api_key": {
-        "section": "AI & Models",
-        "subsection": "Credentials",
+        "section": "API KEYS",
+        "subsection": "OpenAI",
         "label": "OpenAI API Key",
         "type": "secret",
         "default": None,
         "env": "OPENAI_API_KEY",
         "description": "Write-only OpenAI API credential. Existing values are never returned to the browser.",
     },
+    "alpaca.api_key": {
+        "section": "API KEYS",
+        "subsection": "Alpaca",
+        "label": "Alpaca API Key ID",
+        "type": "secret",
+        "default": None,
+        "description": "API Key ID for US market data. Select the source in Data & Quality. Trading remains with Moomoo.",
+    },
+    "alpaca.secret_key": {
+        "section": "API KEYS",
+        "subsection": "Alpaca",
+        "label": "Alpaca Secret Key",
+        "type": "secret",
+        "default": None,
+        "description": "Secret paired with the Alpaca API Key ID. Stored on the server and never returned to the browser.",
+    },
+
+    # Model configuration
     "ai.research.enabled": {
         "section": "AI & Models",
         "subsection": "Research",
@@ -377,9 +395,52 @@ DEFINITIONS = {
         "section": "Advanced Quant Model", "subsection": "Volume", "label": "Volume Ratio Cap", "type": "number", "default": 5.0, "min": 1, "max": 100
     },
 
+    # Shared chart, quant and AI market-data configuration.
+    "data.provider": {
+        "section": "Data & Quality", "subsection": "Market Data", "label": "Market Data Provider",
+        "type": "enum", "default": "opend", "options": ["opend", "alpaca"],
+        "option_labels": {"opend": "OpenD (Moomoo)", "alpaca": "Alpaca"},
+        "description": "Source for candles and market prices. Alpaca supports US stocks; account data, security fundamentals and order execution remain with OpenD. Provider caches remain separate.",
+    },
+    "data.adjustment": {
+        "section": "Data & Quality", "subsection": "Market Data", "label": "Historical Price Adjustment",
+        "type": "enum", "default": "adjusted", "options": ["adjusted", "raw"],
+        "description": "Shared by charts and quant metrics. Adjusted uses OpenD QFQ or Alpaca all corporate-action adjustments. Adjusted caches are fully refreshed at each new trading date and completed exchange session. Quotes and execution prices remain raw.",
+    },
+    "alpaca.feed": {
+        "section": "Data & Quality", "subsection": "Alpaca", "label": "Alpaca Stock Feed",
+        "type": "enum", "default": "sip", "options": ["sip", "iex"],
+        "description": "SIP covers US exchanges; IEX covers one exchange and has different volumes. Feed caches are isolated.",
+    },
+    "alpaca.delay_minutes": {
+        "section": "Data & Quality", "subsection": "Alpaca", "label": "SIP Data Delay",
+        "type": "enum", "default": "15", "options": ["15", "0"], "unit": "minutes",
+        "option_labels": {"15": "15 minutes (free SIP)", "0": "Real-time SIP (subscription)"},
+        "description": "Use 15 for free historical SIP data and delayed SIP snapshots. Set 0 only with real-time SIP entitlement. Delayed prices are clearly labelled and are not execution prices.",
+    },
+    "alpaca.requests_per_minute": {
+        "section": "Data & Quality", "subsection": "Alpaca", "label": "Alpaca Request Limit",
+        "type": "integer", "default": 180, "min": 1, "max": 180, "unit": "requests/minute",
+        "description": "Shared request pacing for every history page and snapshot batch, below the Basic 200/minute limit. Provider Retry-After and reset headers apply additional cooldowns.",
+    },
+    "data.cache_ttl_seconds": {
+        "section": "Data & Quality", "subsection": "History", "label": "Latest Candle Cache Refresh",
+        "type": "integer", "default": 30, "min": 15, "max": 600, "unit": "seconds",
+        "description": "Minimum interval between on-demand refreshes of the same candle series. Earlier chart pages are also saved in the persistent provider cache.",
+    },
     # Metrics / data quality
     "metrics.minimum_history_bars": {
         "section": "Data & Quality", "subsection": "History", "label": "Minimum Usable Metric History", "type": "integer", "default": 60, "min": 20, "max": 500
+    },
+    "history.chart_quota_reserve": {
+        "section": "Quant & Discovery",
+        "subsection": "Run Size",
+        "label": "Historical Candle Slots Reserved for Charts",
+        "type": "integer",
+        "default": 10,
+        "min": 0,
+        "max": 1000,
+        "description": "Stop automatic history downloads for new stocks at this remaining OpenD quota. Already-counted stocks and cached history remain usable. Set 0 to disable the reserve.",
     },
     "history.minimum_completed_bars": {
         "section": "Data & Quality", "subsection": "History", "label": "Required Completed Bars", "type": "integer", "default": 300, "min": 60, "max": 1000
@@ -565,7 +626,13 @@ class SettingsService:
             if isinstance(value, bool):
                 raise ValueError("must be a number")
             result = float(value)
-        elif setting_type in {"string", "secret", "enum"}:
+        elif setting_type == "secret":
+            if not isinstance(value, str):
+                raise ValueError("must be text")
+            result = value.strip()
+            if any(ord(character) < 33 or ord(character) > 126 for character in result):
+                raise ValueError("must contain printable ASCII characters without spaces")
+        elif setting_type in {"string", "enum"}:
             result = str(value).strip()
         else:
             result = value
@@ -615,6 +682,8 @@ class SettingsService:
                 continue
             try:
                 cleaned[key] = self._coerce(definition, raw)
+                if definition.get("type") == "secret" and not cleaned[key]:
+                    cleaned.pop(key)
             except Exception as exc:
                 raise ValueError(f"{key}: {exc}") from exc
 

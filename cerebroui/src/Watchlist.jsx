@@ -1,6 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Eye, Plus, RefreshCw, Search, Sparkles, Trash2 } from "lucide-react";
 import CollapsibleSection from "./CollapsibleSection";
+import useSymbolSearch from "./useSymbolSearch";
+
+const ALL_MARKETS = ["US", "HK", "SH", "SZ", "SG", "MY", "JP"];
 
 function money(value) {
   const n = Number(value);
@@ -30,14 +33,15 @@ function moveText(change, pct) {
 export default function Watchlist() {
   const [items, setItems] = useState([]);
   const [search, setSearch] = useState("");
-  const [results, setResults] = useState([]);
+  const [searchMarket, setSearchMarket] = useState("US");
+  const symbolSearch = useSymbolSearch(searchMarket === "ALL" ? ALL_MARKETS : [searchMarket]);
+  const { results, searching } = symbolSearch;
   const [loading, setLoading] = useState(false);
-  const [searching, setSearching] = useState(false);
+
   const [addingSymbol, setAddingSymbol] = useState(null);
   const [error, setError] = useState(null);
   const [quoteError, setQuoteError] = useState(null);
-  const debounceRef = useRef(null);
-  const requestRef = useRef(0);
+
 
   async function loadWatchlist({ silent = false } = {}) {
     if (!silent) setLoading(true);
@@ -55,44 +59,9 @@ export default function Watchlist() {
     }
   }
 
-  async function runSearch(value = search) {
-    const query = value.trim();
-    if (!query) {
-      setResults([]);
-      return;
-    }
-    const requestId = ++requestRef.current;
-    setSearching(true);
-    try {
-      const r = await fetch(
-        `/api/market/search?q=${encodeURIComponent(query)}&markets=US,HK,SH,SZ,SG,MY,JP&limit=12`,
-        { cache: "no-store" }
-      );
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || `Search failed (${r.status})`);
-      if (requestId === requestRef.current) {
-        setResults(d.results || d.items || []);
-        setError(null);
-      }
-    } catch (e) {
-      if (requestId === requestRef.current) {
-        setResults([]);
-        setError(e.message || "Symbol search failed.");
-      }
-    } finally {
-      if (requestId === requestRef.current) setSearching(false);
-    }
-  }
-
   function onSearchChange(value) {
     setSearch(value);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (value.trim().length < 2) {
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-    debounceRef.current = setTimeout(() => runSearch(value), 280);
+    symbolSearch.schedule(value);
   }
 
   async function addItem(item) {
@@ -115,7 +84,7 @@ export default function Watchlist() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || `Add failed (${r.status})`);
       setSearch("");
-      setResults([]);
+      symbolSearch.clear();
       setError(null);
       await loadWatchlist({ silent: true });
     } catch (e) {
@@ -146,10 +115,7 @@ export default function Watchlist() {
   useEffect(() => {
     loadWatchlist();
     const timer = setInterval(() => loadWatchlist({ silent: true }), 15000);
-    return () => {
-      clearInterval(timer);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    return () => clearInterval(timer);
   }, []);
 
   return (
@@ -164,6 +130,12 @@ export default function Watchlist() {
           </button>
         }
       >
+        <label className="watchlistMarketFilter">Search market
+          <select value={searchMarket} onChange={event => { setSearchMarket(event.target.value); setSearch(""); symbolSearch.clear(); }}>
+            {ALL_MARKETS.map(market => <option key={market} value={market}>{market}</option>)}
+            <option value="ALL">All markets</option>
+          </select>
+        </label>
         <div className="watchlistSearchBar">
           <div className="watchlistSearchShell">
             <div className="watchlistSearchInput">
@@ -175,12 +147,20 @@ export default function Watchlist() {
                 onKeyDown={e => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    if (debounceRef.current) clearTimeout(debounceRef.current);
-                    runSearch();
+                    symbolSearch.run(search);
                   }
                 }}
               />
             </div>
+
+
+          </div>
+
+          <button className="watchlistSearchButton" onClick={() => symbolSearch.run(search)} disabled={searching || !search.trim()}>
+            <Search size={15}/>
+            {searching ? "Searching…" : "Search"}
+          </button>
+        </div>
 
             {results.length > 0 && (
               <div className="watchlistResults">
@@ -202,18 +182,12 @@ export default function Watchlist() {
                 })}
               </div>
             )}
-          </div>
-
-          <button className="watchlistSearchButton" onClick={() => runSearch()} disabled={searching || !search.trim()}>
-            <Search size={15}/>
-            {searching ? "Searching…" : "Search"}
-          </button>
-        </div>
-
         <div className="watchlistSearchHint">
           Suggestions start after 2 characters. Selecting a symbol name opens Markets; Add keeps it monitored here.
         </div>
-        {error && <div className="watchlistError">{error}</div>}
+        {(error || symbolSearch.error) && <div className="watchlistError">{error || symbolSearch.error}</div>}
+        {searching && <div className="watchlistSearchHint" role="status">Searching {searchMarket === "ALL" ? "all markets" : searchMarket}…</div>}
+        {!searching && search.trim().length >= 2 && !results.length && !symbolSearch.error && <div className="watchlistSearchHint" role="status">No matching securities in {searchMarket === "ALL" ? "the selected markets" : searchMarket}.</div>}
         {quoteError && <div className="watchlistError">Watchlist saved, but live quotes are temporarily unavailable: {quoteError}</div>}
       </CollapsibleSection>
 

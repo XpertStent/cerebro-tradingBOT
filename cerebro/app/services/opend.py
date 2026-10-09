@@ -8,8 +8,13 @@ from moomoo import (
 )
 
 from app.config import config
+from app.services.symbol_catalog import SymbolCatalogCache, SymbolCatalogTimeout
+from app.services.history_quota import HistoricalCandleQuotaError, check_history_reserve, is_history_quota_error
 
 import math
+import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 
 class OpenDClient:
@@ -33,6 +38,7 @@ class OpenDClient:
         self.host = host
         self.port = port
         self.default_market = default_market
+        self._symbol_catalog = SymbolCatalogCache()
 
     def _context(self):
         return OpenQuoteContext(
@@ -223,6 +229,18 @@ class OpenDClient:
         finally:
             ctx.close()
 
+    def check_history_capacity(self, symbol, reserve):
+        if reserve <= 0:
+            return
+        ctx = self._context()
+        try:
+            ret, quota = ctx.get_history_kl_quota(get_detail=True)
+            if ret != RET_OK:
+                raise RuntimeError("Historical analysis paused: OpenD candle quota could not be checked.")
+            check_history_reserve(self.normalize_symbol(symbol), quota, reserve)
+        finally:
+            ctx.close()
+
     def get_candles(
         self,
         symbol: str,
@@ -230,7 +248,8 @@ class OpenDClient:
         count: int = 100,
         start: str = None,
         end: str = None,
-        adjustment: str = "none"
+        adjustment: str = "none",
+        before: str = None
     ):
 
         symbol = self.normalize_symbol(symbol)
@@ -241,6 +260,9 @@ class OpenDClient:
                 f"Unsupported timeframe '{timeframe}'. "
                 f"Supported: {', '.join(self.TIMEFRAMES)}"
             )
+
+        if before:
+            before = datetime.fromisoformat(before).strftime("%Y-%m-%d %H:%M:%S")
 
         ctx = self._context()
 
@@ -271,32 +293,50 @@ class OpenDClient:
                 "max_count": 1000,
             }
 
-            if start is not None:
-                kwargs["start"] = start
+            market_timezone = {"US":"America/New_York", "HK":"Asia/Hong_Kong", "SH":"Asia/Shanghai", "SZ":"Asia/Shanghai", "SG":"Asia/Singapore", "MY":"Asia/Kuala_Lumpur", "JP":"Asia/Tokyo"}.get(symbol.split(".")[0], "Asia/Hong_Kong")
+            now = datetime.now(ZoneInfo(market_timezone))
+            minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
+            if timeframe in minutes:
+                lookback_days = max(7, math.ceil(count * minutes[timeframe] / 390 * 2) + 7)
+            else:
+                lookback_days = count * (14 if timeframe == "1w" else 2) + 14
+            kwargs["end"] = end or (before[:10] if before else now.strftime("%Y-%m-%d"))
+            end_date = datetime.strptime(kwargs["end"][:10], "%Y-%m-%d")
+            kwargs["start"] = start or (end_date - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
 
-            if end is not None:
-                kwargs["end"] = end
-
-            ret, data, page_req_key = (
-                ctx.request_history_kline(
-                    **kwargs
-                )
-            )
-
-            if ret != RET_OK:
-                raise RuntimeError(str(data))
-
-            # Moomoo may return the oldest rows first.
-            # Always return the latest N candles.
-            data = data.sort_values(
-                by="time_key"
-            ).tail(count)
+            # History pages are oldest-first; exhaust the range before selecting
+            # the latest N. Returning only the first page silently shows old prices.
+            rows = {}
+            page_key = None
+            seen_keys = set()
+            for _ in range(100):
+                ret, data, next_key = ctx.request_history_kline(**kwargs, page_req_key=page_key)
+                if ret != RET_OK:
+                    if is_history_quota_error(data):
+                        raise HistoricalCandleQuotaError(str(data))
+                    raise RuntimeError(str(data))
+                for _, row in data.iterrows():
+                    if row.get("code") is not None and str(row.get("code")) != symbol:
+                        raise RuntimeError("Broker candle symbol does not match request")
+                    rows[str(row.get("time_key"))] = row
+                if not next_key:
+                    break
+                marker = repr(next_key)
+                if marker in seen_keys:
+                    raise RuntimeError("Broker repeated a candle pagination key")
+                seen_keys.add(marker)
+                page_key = next_key
+            else:
+                raise RuntimeError("Candle history pagination exceeded the safety limit")
 
             candles = []
 
-            for _, row in data.iterrows():
-
+            eligible_times = [key for key in sorted(rows) if not before or key < before]
+            for time_key in eligible_times[-count:]:
+                row = rows[time_key]
+                candle_time = datetime.fromisoformat(time_key).replace(tzinfo=ZoneInfo(market_timezone))
                 candles.append({
+                    "timestamp": int(candle_time.timestamp()),
                     "time": self._clean(row.get("time_key")),
                     "open": self._clean(row.get("open")),
                     "high": self._clean(row.get("high")),
@@ -310,6 +350,15 @@ class OpenDClient:
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "count": len(candles),
+                "timezone": market_timezone,
+                "adjustment": adjustment_key,
+                "session": "REGULAR",
+                "start": kwargs["start"],
+                "end": kwargs["end"],
+                "latest_candle_time": candles[-1]["time"] if candles else None,
+                "before": before,
+                "oldest_candle_time": candles[0]["time"] if candles else None,
+                "has_more": bool(candles),
                 "candles": candles
             }
 
@@ -410,141 +459,75 @@ class OpenDClient:
             ctx.close()
 
 
-    def search_symbols(
-        self,
-        query: str,
-        markets: list[str] | None = None,
-        limit: int = 20
-    ):
-        query = query.strip().lower()
+    def _load_symbol_catalog(self, market_id, market_enum, security_type):
+        ctx = self._context()
+        try:
+            ret, data = ctx.get_stock_basicinfo(market_enum, security_type)
+            if ret != RET_OK:
+                raise RuntimeError(str(data))
+            entries = []
+            for row in data.to_dict("records"):
+                code = str(row.get("code") or "")
+                if not code:
+                    continue
+                ticker = code.split(".", 1)[-1]
+                name = str(row.get("name") or "")
+                entries.append({"symbol": code, "ticker": ticker, "name": name,
+                                "market": market_id, "security_type": str(security_type),
+                                "_ticker": ticker.lower(), "_name": name.lower()})
+            return entries
+        finally:
+            ctx.close()
 
+    def search_symbols(self, query: str, markets: list[str] | None = None, limit: int = 20):
+        query = query.strip().lower()
+        if not query:
+            return []
+        market_map = {"US": Market.US, "HK": Market.HK, "SH": Market.SH, "SZ": Market.SZ,
+                      "SG": Market.SG, "MY": Market.MY, "JP": Market.JP}
+        selected = list(dict.fromkeys(m.upper() for m in (markets or market_map) if m.upper() in market_map))
+        prefix, separator, remainder = query.partition(".")
+        if separator and prefix.upper() in market_map:
+            selected = [m for m in selected if m == prefix.upper()]
+            query = remainder
         if not query:
             return []
 
-        market_map = {
-            "US": Market.US,
-            "HK": Market.HK,
-            "SH": Market.SH,
-            "SZ": Market.SZ,
-            "SG": Market.SG,
-            "MY": Market.MY,
-            "JP": Market.JP,
-        }
-
-        if not markets:
-            markets = list(market_map.keys())
-
-        selected = [
-            m.upper()
-            for m in markets
-            if m.upper() in market_map
-        ]
-
-        ctx = self._context()
-
-        try:
-            matches = []
-
-            for market_id in selected:
-
-                market_enum = market_map[market_id]
-
-                # Search both equities and ETFs where supported.
-                security_types = [
-                    SecurityType.STOCK,
-                    SecurityType.ETF
-                ]
-
-                for security_type in security_types:
-
-                    try:
-                        ret, data = ctx.get_stock_basicinfo(
-                            market_enum,
-                            security_type
-                        )
-
-                        if ret != RET_OK:
-                            continue
-
-                    except Exception:
-                        # Some market/security-type combinations
-                        # are not supported by OpenD.
-                        continue
-
-                    for _, row in data.iterrows():
-
-                        code = str(row.get("code", ""))
-                        name = str(row.get("name", ""))
-
-                        if not code:
-                            continue
-
-                        ticker = code.split(".")[-1]
-
-                        q = query
-                        ticker_lower = ticker.lower()
-                        name_lower = name.lower()
-
-                        score = None
-
-                        if ticker_lower == q:
-                            score = 0
-                        elif name_lower == q:
-                            score = 1
-                        elif ticker_lower.startswith(q):
-                            score = 2
-                        elif name_lower.startswith(q):
-                            score = 3
-                        elif q in ticker_lower:
-                            score = 4
-                        elif q in name_lower:
-                            score = 5
-
-                        if score is None:
-                            continue
-
-                        matches.append({
-                            "symbol": code,
-                            "ticker": ticker,
-                            "name": name,
-                            "market": market_id,
-                            "security_type": str(security_type),
-                            "_score": score
-                        })
-
-            # Remove duplicates
-            unique = {}
-
-            for item in matches:
-                key = item["symbol"]
-
-                if (
-                    key not in unique
-                    or item["_score"] < unique[key]["_score"]
-                ):
-                    unique[key] = item
-
-            matches = list(unique.values())
-
-            matches.sort(
-                key=lambda x: (
-                    x["_score"],
-                    x["market"],
-                    len(x["ticker"]),
-                    x["ticker"]
-                )
-            )
-
-            results = []
-
-            for item in matches[:limit]:
-                item.pop("_score", None)
-                results.append(item)
-
-            return results
-
-        finally:
-            ctx.close()
+        matches = {}
+        loaded = 0
+        waiting = False
+        deadline = time.monotonic() + 8
+        for market_id in selected:
+            for security_type in (SecurityType.STOCK, SecurityType.ETF):
+                try:
+                    catalog = self._symbol_catalog.get(
+                        (market_id, str(security_type)),
+                        lambda market_id=market_id, security_type=security_type: self._load_symbol_catalog(market_id, market_map[market_id], security_type),
+                        wait_timeout=min(4, max(0, deadline - time.monotonic())))
+                except SymbolCatalogTimeout:
+                    waiting = True
+                    continue
+                except Exception:
+                    # Unsupported combinations are retried after a short backoff.
+                    continue
+                loaded += 1
+                for item in catalog:
+                    ticker, name = item['_ticker'], item['_name']
+                    if ticker == query: score = 0
+                    elif name == query: score = 1
+                    elif ticker.startswith(query): score = 2
+                    elif name.startswith(query): score = 3
+                    elif query in ticker: score = 4
+                    elif query in name: score = 5
+                    else: continue
+                    if item['symbol'] not in matches or score < matches[item['symbol']]['_score']:
+                        matches[item['symbol']] = {**item, '_score': score}
+        if selected and not loaded:
+            if waiting:
+                raise SymbolCatalogTimeout("OpenD securities list is still loading. Try searching again shortly.")
+            raise RuntimeError("OpenD symbol catalog is unavailable; retry shortly")
+        ordered = sorted(matches.values(), key=lambda item: (item['_score'], item['market'], len(item['ticker']), item['ticker']))
+        return [{key: value for key, value in item.items() if not key.startswith('_')} for item in ordered[:limit]]
 
 
 opend = OpenDClient(

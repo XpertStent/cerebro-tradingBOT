@@ -1,0 +1,329 @@
+.headerRightCluster,
+.headerTradingControls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.environmentBadge,
+.liveBadge,
+.liveMiniBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .06em;
+}
+
+.environmentBadge.paper,
+.paperBadge {
+  background: #eef2ff;
+  color: #3730a3;
+  border: 1px solid #c7d2fe;
+}
+
+.environmentBadge.live,
+.liveBadge,
+.liveMiniBadge {
+  background: #fff1f2;
+  color: #be123c;
+  border: 1px solid #fecdd3;
+}
+
+.tradingLockButton {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 9px;
+  padding: 0 12px;
+  border: 1px solid #dbe2ea;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.tradingLockButton.locked {
+  background: #111827;
+  color: #fff;
+  border-color: #111827;
+}
+
+.tradingLockButton.unlocked {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.tradingLockButton:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.liveTradingBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 11px 13px;
+  border-radius: 11px;
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.liveTradingBanner.unlocked {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #9f1239;
+}
+
+.liveTradingBanner strong,
+.liveTradingBanner span {
+  display: block;
+}
+
+.liveTradingBanner span {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.liveModeApp main > header {
+  border-bottom-color: #fecdd3;
+}
+
+.unlockModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, .52);
+  backdrop-filter: blur(2px);
+}
+
+.unlockModal {
+  width: min(620px, 100%);
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, .28);
+  padding: 20px;
+}
+
+.unlockModalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.unlockModalHeader h2 {
+  margin: 8px 0 4px;
+  color: #172033;
+  font-size: 21px;
+}
+
+.unlockModalHeader p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.unlockClose {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  cursor: pointer;
+}
+
+.unlockWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 16px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.unlockField {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.unlockField > span {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.unlockField select,
+.unlockField input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 11px;
+  border-radius: 9px;
+  border: 1px solid #d7dee8;
+  background: #fff;
+}
+
+.unlockStatus {
+  margin-top: 12px;
+  padding: 10px 11px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.unlockStatus.error {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.unlockStatus.warn {
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.unlockActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.unlockCancel,
+.unlockConfirm {
+  min-height: 39px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 13px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.unlockCancel {
+  border: 1px solid #dbe2ea;
+  background: #fff;
+  color: #334155;
+}
+
+.unlockConfirm {
+  border: 1px solid #be123c;
+  background: #be123c;
+  color: #fff;
+}
+
+.unlockCancel:disabled,
+.unlockConfirm:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.liveOrderNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid #fecdd3;
+  background: #fff1f2;
+  color: #9f1239;
+  font-size: 12px;
+}
+
+.previewAccountGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.previewAccountCard {
+  padding: 9px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.previewAccountCard span,
+.previewAccountCard strong {
+  display: block;
+}
+
+.previewAccountCard span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.previewAccountCard strong {
+  margin-top: 3px;
+  color: #172033;
+  font-size: 13px;
+}
+
+.orderEnvironmentBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.orderEnvironmentBadge.live {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+@media (max-width: 760px) {
+  .headerRightCluster {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .headerTradingControls {
+    justify-content: flex-start;
+  }
+
+  .previewAccountGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .unlockActions > button {
+    flex: 1 1 100%;
+  }
+}
