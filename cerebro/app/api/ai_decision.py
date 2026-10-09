@@ -100,6 +100,14 @@ def get_latest_decision():
     return decorate_reviews({"result": ai_decision_jobs.latest()})
 
 
+@router.get("/research/{run_id}/{symbol}")
+def get_research_output(run_id: str, symbol: str):
+    data = ai_decision_jobs.research_output(run_id, symbol)
+    if data is None:
+        raise HTTPException(status_code=404, detail="No research output is available for this symbol in this run")
+    return data
+
+
 @router.delete("/latest")
 def clear_latest_decision():
     result = ai_decision_jobs.clear_latest()

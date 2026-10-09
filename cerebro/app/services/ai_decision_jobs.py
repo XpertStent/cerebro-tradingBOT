@@ -182,6 +182,9 @@ class AIDecisionJobManager:
             })
             details = ai.setdefault("research_details", {})
             if symbol:
+                research_output = values.get("research_output")
+                if isinstance(research_output, dict) and research_output.get("symbol") == symbol:
+                    job.setdefault("research_outputs", {})[symbol] = deepcopy(research_output)
                 ai.setdefault("research_symbols", {})[symbol] = status or "COMPLETE"
                 details[symbol] = {
                     "symbol": symbol,
@@ -189,6 +192,7 @@ class AIDecisionJobManager:
                     "cache": values.get("cache"),
                     "batch_number": values.get("batch_number"),
                     "error": values.get("error"),
+                    "output_available": symbol in job.get("research_outputs", {}),
                 }
             elif status == "RETRY":
                 for batch_symbol in values.get("batch_symbols") or []:
@@ -529,7 +533,7 @@ class AIDecisionJobManager:
             job = self._jobs.get(run_id)
             if not job:
                 return None
-            data = deepcopy({k: v for k, v in job.items() if k not in {"result", "decision_input"}})
+            data = deepcopy({k: v for k, v in job.items() if k not in {"result", "decision_input", "research_outputs"}})
         started = data.get("started_at")
         finished = data.get("finished_at")
         data["elapsed_seconds"] = round((finished or self._now()) - started, 1) if started else 0.0
@@ -539,6 +543,23 @@ class AIDecisionJobManager:
         else:
             data["ai"]["model_elapsed_seconds"] = 0.0
         return data
+
+    def research_output(self, run_id, symbol):
+        symbol = str(symbol).upper()
+        with self._lock:
+            output = (self._jobs.get(run_id, {}).get("research_outputs") or {}).get(symbol)
+            if output is not None:
+                return {"run_id": run_id, "symbol": symbol, "output": deepcopy(output)}
+        # Completed results and captured decision inputs survive worker restarts.
+        stored = latest_ai_decision.load()
+        context = ((stored.get("result") or {}).get("ai") or {}).get("context") if stored and stored.get("run_id") == run_id else None
+        if context is None:
+            captured = latest_decision_input.load()
+            context = (captured.get("result") or {}).get("context") if captured and captured.get("run_id") == run_id else None
+        for candidate in (context or {}).get("candidates") or []:
+            if candidate.get("symbol") == symbol and candidate.get("research_context") is not None:
+                return {"run_id": run_id, "symbol": symbol, "output": deepcopy(candidate["research_context"])}
+        return None
 
     def result(self, run_id):
         # The atomic persisted result is authoritative across API workers.
@@ -561,7 +582,7 @@ class AIDecisionJobManager:
             ]
             if active:
                 newest = max(active, key=lambda item: float(item.get("created_at") or 0))
-                data = deepcopy({k: v for k, v in newest.items() if k not in {"result", "decision_input"}})
+                data = deepcopy({k: v for k, v in newest.items() if k not in {"result", "decision_input", "research_outputs"}})
                 started = data.get("started_at")
                 if started:
                     data["elapsed_seconds"] = round(self._now() - started, 1)
@@ -592,6 +613,9 @@ class AIDecisionJobManager:
         with self._lock:
             for job in self._jobs.values():
                 job.pop("decision_input", None)
+                job.pop("research_outputs", None)
+                for detail in (job.get("ai", {}).get("research_details") or {}).values():
+                    detail["output_available"] = False
                 job["decision_input_available"] = False
                 ai = (job.get("result") or {}).get("ai") or {}
                 ai.pop("request_snapshot", None)

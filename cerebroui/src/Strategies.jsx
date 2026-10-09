@@ -18,6 +18,7 @@ import "./AIEngine.css";
 import CollapsibleSection from "./CollapsibleSection";
 import WorkflowEvent from "./WorkflowEvent";
 import DecisionInput from "./DecisionInput";
+import ResearchOutput from "./ResearchOutput";
 import { brokerAction } from "./TradingControls";
 import { RESOLVED_STATUSES, confirmationMatches, batchTotals } from "./decisionActions";
 
@@ -88,7 +89,7 @@ export default function Strategies() {
   const researchSymbols = progress?.ai?.research_symbols || {};
   const liveResearchDetails = progress?.ai?.research_details || {};
   const events = progress?.events || [];
-  const decisionContext = bundle?.ai?.context || {};
+  const decisionContext = bundle?.run_id === runId ? bundle?.ai?.context || {} : {};
   const researchBatchCount = decisionContext?.run?.research_parallel_batches;
   const decisionWebResearch = progress?.ai?.decision_web_research || bundle?.ai?.decision_web_research;
 
@@ -470,7 +471,8 @@ export default function Strategies() {
                   </div>
                   <button className="aiSecondary" onClick={() => setSelectedResearchSymbol(null)}>Close detail</button>
                 </div>
-                <pre>{pretty(selectedResearch)}</pre>
+                <ResearchOutput key={`${runId}:${selectedResearchSymbol}`} runId={runId}
+                  symbol={selectedResearchSymbol} detail={selectedResearch} />
               </div>
             )}
           </>
