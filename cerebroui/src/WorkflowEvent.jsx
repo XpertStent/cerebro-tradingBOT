@@ -1,6 +1,7 @@
 import React from "react";
 import { Activity, ChevronDown } from "lucide-react";
 import { historyDate, historyNumber, historyStatus, historySource } from "./workflowHistory";
+import PatternDetails from "./PatternDetails";
 
 const indicatorLabels = {
   return_20d_pct: "20-session return (%)",
@@ -68,11 +69,16 @@ function HistoryDetails({ detail }) {
         <h4>Price moves requiring event review</h4>
         <ul>{anomalies.map((item, index) => <li key={index}>{historyDate(item.date)} · {historyNumber(item.return_pct ?? item.abs_return_pct)}% move</li>)}</ul>
       </div>}
+      {detail.technical_analysis && <PatternDetails analysis={detail.technical_analysis}/>}
     </div>
   );
 }
 
 export default function WorkflowEvent({ event }) {
+  if (event.pattern_details) return <details className="aiWorkflowEvent">
+    <summary className="aiEvent aiEventExpandable"><Activity size={14}/><div className="aiEventText"><strong>{event.stage}</strong><span>{event.message}</span></div><ChevronDown size={16}/></summary>
+    <PatternDetails analysis={event.pattern_details}/>
+  </details>;
   const detail = event.details;
   const tone = event.kind === "ERROR" ? "error" : event.kind === "SUCCESS" ? "success" : "";
   const content = <>

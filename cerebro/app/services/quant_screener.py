@@ -14,6 +14,7 @@ from app.services.local_discovery import local_discovery
 from app.services.opend import opend
 from app.services.settings import settings
 from app.services.history_quota import HistoryQuotaReserved
+from app.services.technical_analysis import technical_analysis
 
 
 class QuantScreener:
@@ -390,7 +391,8 @@ class QuantScreener:
                 )
                 continue
 
-            analysed.append({**item, "metrics": metrics})
+            technical = technical_analysis.analyze_series(symbol, series)
+            analysed.append({**item, "metrics": metrics, "technical_analysis": technical})
 
             self._progress(
                 progress_callback,
@@ -408,7 +410,7 @@ class QuantScreener:
                     symbol, minimum_history_bars, benchmark_symbol,
                     configuration=data_configuration, history=history_info,
                     metrics=metrics, checked=checked_bars,
-                    status="ANALYSED", started=analysis_started,
+                    status="ANALYSED", started=analysis_started, technical=technical,
                 ),
             )
 
@@ -546,7 +548,7 @@ class QuantScreener:
     def _history_detail(
         self, symbol, minimum, benchmark, *, configuration, role="CANDIDATE",
         history=None, metrics=None, status="RUNNING", reason=None, started=None,
-        checked=0,
+        checked=0, technical=None,
     ):
         history = history or {}
         metrics = metrics or {}
@@ -583,6 +585,7 @@ class QuantScreener:
             "refresh_error": history.get("refresh_error"),
             "benchmark_symbol": benchmark,
             "elapsed_seconds": round(monotonic() - started, 2) if started is not None else None,
+            "technical_analysis": technical,
             "indicators": {
                 key: metrics[key] for key in (
                     "return_20d_pct", "return_60d_pct", "return_120d_pct",
@@ -835,9 +838,16 @@ class QuantScreener:
         total = len(ordered)
         result = {}
 
-        for index, (symbol, _) in enumerate(ordered):
-            percentile = 100.0 if total == 1 else index / (total - 1) * 100
-            result[symbol] = round(percentile, 2)
+        index = 0
+        while index < total:
+            end = index + 1
+            while end < total and ordered[end][1] == ordered[index][1]:
+                end += 1
+            # Equal evidence gets equal average ranks, independent of input order.
+            percentile = 100.0 if total == 1 else ((index + end - 1) / 2) / (total - 1) * 100
+            for symbol, _ in ordered[index:end]:
+                result[symbol] = round(percentile, 2)
+            index = end
         return result
 
     def _weighted_score(self, q):

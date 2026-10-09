@@ -1,0 +1,15 @@
+.patternPanel { margin: 12px 0; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; color: #334155; }
+.patternPanel > summary, .patternEvent > summary { padding: 12px; cursor: pointer; line-height: 1.5; }
+.patternBody { padding: 0 12px 12px; }
+.patternNote { color: #64748b; font-size: 13px; line-height: 1.6; }
+.patternEvent { border-top: 1px solid #e2e8f0; }
+.patternEvent > summary strong { margin-right: 12px; text-transform: capitalize; }
+.patternEvent > summary span { font-size: 12px; color: #64748b; }
+.patternGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.patternGrid dt { font-size: 12px; color: #64748b; }
+.patternGrid dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 13px; }
+.patternBody pre { background: #f8fafc; padding: 10px; max-height: 300px; overflow: auto; font-size: 12px; }
+.patternOverlayButton { border: 1px solid #c4b5fd; color: #6d28d9; background: #f5f3ff; border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+.patternTableWrap { max-height: 300px; overflow: auto; }
+.patternTableWrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.patternTableWrap th, .patternTableWrap td { padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: left; }

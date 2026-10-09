@@ -13,6 +13,7 @@ const labels = {
   watchlist: "Monitored security", active_thesis: "Active thesis", recent_decisions: "Recent decisions",
   rejection_summary: "Rejection history", symbol: "Symbol", relationship: "Primary relationship",
   relationships: "Portfolio relationships",
+  technical_analysis: "Technical pattern and candle evidence",
 };
 
 function JsonDetails({ name, value }) {

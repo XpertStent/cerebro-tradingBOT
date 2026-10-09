@@ -4,6 +4,8 @@ import { fetchJson } from "./fetchJson";
 import { securityLabel, selectedSecurityForQuery } from "./marketSelection";
 import { historyQuotaFailure, candleFailureMessage } from "./candleErrors";
 import { chartTime, createChartTimeFormatters, lastCandleLabel } from "./chartTime";
+import PatternDetails from "./PatternDetails";
+import { compatiblePatterns, selectedPattern, patternLines, patternMarkers } from "./patternPresentation";
 import React, {
   useEffect,
   useRef,
@@ -14,7 +16,8 @@ import {
   createChart,
   CandlestickSeries,
   LineSeries,
-  HistogramSeries
+  HistogramSeries,
+  createSeriesMarkers
 } from "lightweight-charts";
 
 import {
@@ -136,6 +139,11 @@ export default function Markets() {
   const [followLatest, setFollowLatest] = useState(true);
   const [latestJump, setLatestJump] = useState(0);
   const [chartInfo, setChartInfo] = useState(null);
+  const [patterns, setPatterns] = useState(null);
+  const [patternId, setPatternId] = useState(null);
+  const [showPatterns, setShowPatterns] = useState(true);
+  const patternCompatible = compatiblePatterns(patterns, chartInfo, candles);
+  const pattern = patternCompatible ? selectedPattern(patterns, patternId) : null;
 
   async function loadSymbol(target, quiet = false) {
 
@@ -156,6 +164,11 @@ export default function Markets() {
           setQuoteError(failure.message);
         })
     ];
+    if (timeframe === "1d" && (!quiet || !candleQuotaBlocked.current)) {
+      jobs.push(fetchJson(`/api/patterns/${encodeURIComponent(target)}`, { cache: "no-store", timeoutMs: 45000 })
+        .then(data => { if (requestId === chartRequestId.current && data.symbol === target) setPatterns(data); })
+        .catch(() => { if (requestId === chartRequestId.current) setPatterns({ available: false, reason: "PATTERN_REQUEST_UNAVAILABLE" }); }));
+    }
     // A broker quota failure must not hide a quote or hammer history every 30s.
     // Explicit Search or a new symbol/interval permits a fresh candle attempt.
     if (!quiet || !candleQuotaBlocked.current) {
@@ -337,6 +350,8 @@ export default function Markets() {
     olderRequest.current = null;
     setHistoryStatus("");
     setChartInfo(null);
+    setPatterns(null);
+    setPatternId(null);
     setCandles([]);
     setFollowLatest(true);
     if (symbol) loadSymbol(symbol);
@@ -775,6 +790,11 @@ export default function Markets() {
 
 
             {error && <div className="chartError" role="alert">{error}</div>}
+            {timeframe === "1d" && <>
+              <label className="patternNote"><input type="checkbox" checked={showPatterns} onChange={event => setShowPatterns(event.target.checked)}/> Pattern overlays (daily)</label>
+              {patterns?.available && !patternCompatible && <p className="patternNote">Pattern history does not match the visible chart basis yet. Overlays are withheld until the data matches.</p>}
+              <PatternDetails analysis={patterns} selectedId={pattern?.id} onSelect={id => { setPatternId(id); setShowPatterns(true); }}/>
+            </>}
             {historyStatus && <p role="status">{historyStatus}</p>}
             {(
 
@@ -789,6 +809,8 @@ export default function Markets() {
                 timezone={chartInfo?.timezone || "America/New_York"}
                 chartType={chartType}
                 showVolume={showVolume}
+                pattern={showPatterns ? pattern : null}
+                candleEvidence={showPatterns && patternCompatible ? patterns.candle_evidence : []}
               />
 
             )}
@@ -917,7 +939,7 @@ export default function Markets() {
 }
 
 
-export function PriceChart({ candles, followLatest, latestJump, timeframe, timezone, chartType, showVolume, onLoadOlder, onBrowseHistory }) {
+export function PriceChart({ candles, followLatest, latestJump, timeframe, timezone, chartType, showVolume, onLoadOlder, onBrowseHistory, pattern, candleEvidence }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const previousData = useRef([]);
@@ -940,7 +962,7 @@ export function PriceChart({ candles, followLatest, latestJump, timeframe, timez
     const price = chart.addSeries(chartType === "candles" ? CandlestickSeries : LineSeries, chartType === "line" ? { lineWidth: 2 } : {});
     const volume = showVolume ? chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "" }) : null;
     volume?.priceScale().applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
-    const state = { chart, price, volume, updating: false };
+    const state = { chart, price, volume, updating: false, overlays: [], markers: createSeriesMarkers(price, []) };
     chartRef.current = state;
     const rangeChanged = range => {
       if (!state.updating && range && range.from < 30 && latestProps.current.candles.length && !latestProps.current.followLatest) latestProps.current.onLoadOlder();
@@ -978,6 +1000,25 @@ export function PriceChart({ candles, followLatest, latestJump, timeframe, timez
     previousData.current = candles;
     state.updating = false;
   }, [candles, timeframe, timezone, chartType, showVolume, followLatest, latestJump]);
+
+  useEffect(() => {
+    const state = chartRef.current;
+    if (!state) return;
+    state.updating = true;
+    const range = state.chart.timeScale().getVisibleLogicalRange();
+    for (const series of state.overlays) state.chart.removeSeries(series);
+    state.overlays = [];
+    state.markers.setMarkers(timeframe === "1d" ? patternMarkers(pattern, candleEvidence, candles) : []);
+    if (timeframe === "1d") {
+      for (const data of patternLines(pattern, candles)) {
+        const series = state.chart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        series.setData(data);
+        state.overlays.push(series);
+      }
+    }
+    if (range) state.chart.timeScale().setVisibleLogicalRange(range);
+    state.updating = false;
+  }, [pattern, candleEvidence, candles, timeframe, timezone, chartType, showVolume]);
 
   return <div ref={containerRef} className="priceChart" onPointerDown={onBrowseHistory} onWheel={onBrowseHistory}/>;
 }

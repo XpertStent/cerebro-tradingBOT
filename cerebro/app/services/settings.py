@@ -533,6 +533,32 @@ DEFINITIONS = {
         "section": "Automation", "subsection": "AI Cycles", "label": "Cycle Times (ET)", "type": "string", "default": "10:00,13:00,15:30", "description": "Comma-separated Eastern Time run times.", "future": True
     },
 
+    "patterns.mode": {
+        "section": "Technical Patterns", "subsection": "Analysis", "label": "Pattern Analysis Mode",
+        "type": "enum", "default": "observe", "options": ["off", "observe", "advisory"],
+        "option_labels": {"off": "Off", "observe": "Observation only", "advisory": "AI advisory"},
+        "description": "Completed daily candles only. Observation displays and stores evidence without sending it to AI or changing quant scores. Advisory includes compact per-symbol evidence in decision input. Neither mode arms orders or changes risk limits.",
+    },
+    "patterns.pivot_n": {"section": "Technical Patterns", "subsection": "Geometry", "label": "Pivot Confirmation Delay", "type": "integer", "default": 3, "min": 2, "max": 10, "unit": "completed candles", "description": "A swing requires this many following completed candles. Signals are dated at recognition, never backdated to the swing."},
+    "patterns.window": {"section": "Technical Patterns", "subsection": "Geometry", "label": "Chart Pattern Window", "type": "integer", "default": 120, "min": 40, "max": 400, "unit": "candles", "description": "Rolling shape window. Flags use up to 30 candles; pennants up to 15. History Fetch Count remains the shared history setting."},
+    "patterns.swing_pct": {"section": "Technical Patterns", "subsection": "Geometry", "label": "Minimum Swing Change", "type": "number", "default": 0, "min": 0, "max": 30, "unit": "%", "description": "Filter same-kind pivots using actual swing prices. Zero disables this filter."},
+    "patterns.symmetry_pct": {"section": "Technical Patterns", "subsection": "Geometry", "label": "Peak / Shoulder Symmetry Tolerance", "type": "number", "default": 5, "min": 0.1, "max": 20, "unit": "%"},
+    "patterns.separation": {"section": "Technical Patterns", "subsection": "Geometry", "label": "Minimum Swing Separation", "type": "integer", "default": 6, "min": 2, "max": 30, "unit": "candles"},
+    "patterns.flat_slope": {"section": "Technical Patterns", "subsection": "Geometry", "label": "Flat Boundary Slope Tolerance", "type": "number", "default": 0.02, "min": 0.001, "max": 0.2, "description": "Price units per candle after scaling the first history close to 100. Keeps identical scaled shapes consistent."},
+    "patterns.min_pole_pct": {"section": "Technical Patterns", "subsection": "Confirmation", "label": "Minimum Flagpole Move", "type": "number", "default": 5, "min": 1, "max": 100, "unit": "%"},
+    "patterns.breakout_atr": {"section": "Technical Patterns", "subsection": "Confirmation", "label": "Breakout Buffer", "type": "number", "default": 0.1, "min": 0, "max": 2, "unit": "ATR", "description": "Completed close must cross the frozen boundary plus this fraction of ATR measured at recognition."},
+    "patterns.volume_ratio": {"section": "Technical Patterns", "subsection": "Confirmation", "label": "Minimum Breakout Volume Ratio", "type": "number", "default": 0, "min": 0, "max": 5, "description": "Breakout volume / preceding 20-candle average. Zero disables the requirement; provider feed volumes remain distinct."},
+    "patterns.expiry_bars": {"section": "Technical Patterns", "subsection": "Confirmation", "label": "Unconfirmed Pattern Expiry", "type": "integer", "default": 30, "min": 1, "max": 120, "unit": "candles"},
+    "patterns.candle_lookback": {"section": "Technical Patterns", "subsection": "Candlestick Evidence", "label": "Recent Candle Evidence Window", "type": "integer", "default": 10, "min": 1, "max": 30, "unit": "candles"},
+    "patterns.candles": {"section": "Technical Patterns", "subsection": "Candlestick Evidence", "label": "TA-Lib Candlestick Evidence", "type": "boolean", "default": True, "description": "All 61 detectors. Signed values represent geometry, not probabilities. Doji, spinning tops and other nondirectional shapes remain neutral; all evidence requires trend context."},
+    "patterns.doubles": {"section": "Technical Patterns", "subsection": "Chart Families", "label": "Double Tops / Bottoms", "type": "boolean", "default": True},
+    "patterns.head_shoulders": {"section": "Technical Patterns", "subsection": "Chart Families", "label": "Head and Shoulders / Inverse", "type": "boolean", "default": True},
+    "patterns.triangles": {"section": "Technical Patterns", "subsection": "Chart Families", "label": "Ascending / Descending / Symmetrical Triangles", "type": "boolean", "default": True},
+    "patterns.wedges": {"section": "Technical Patterns", "subsection": "Chart Families", "label": "Rising / Falling Wedges", "type": "boolean", "default": True},
+    "patterns.flags": {"section": "Technical Patterns", "subsection": "Chart Families", "label": "Bull / Bear Flags", "type": "boolean", "default": True},
+    "patterns.pennants": {"section": "Technical Patterns", "subsection": "Chart Families", "label": "Bull / Bear Pennants", "type": "boolean", "default": True},
+    "patterns.rectangles": {"section": "Technical Patterns", "subsection": "Chart Families", "label": "Rectangles", "type": "boolean", "default": True},
+
     # Infrastructure is intentionally read-only in the app.
     "infrastructure.cerebro_port": {
         "section": "Advanced", "subsection": "Infrastructure", "label": "Cerebro Port", "type": "integer", "default": 7000, "read_only": True

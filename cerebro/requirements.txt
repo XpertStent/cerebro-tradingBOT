@@ -8,5 +8,7 @@ openai
 exchange-calendars>=4.11,<5
 
 numpy>=2,<3
+TA-Lib==0.8.1
+ta-patterns==1.2.1
 # Optional for pattern DataFrame helpers; the broker SDK already requires pandas.
 # pandas>=2,<4

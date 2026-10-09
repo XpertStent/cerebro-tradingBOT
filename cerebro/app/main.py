@@ -30,6 +30,7 @@ from app.api.metrics import router as metrics_router
 from app.api.quant_screener import router as quant_screener_router
 from app.api.history import router as history_router
 from app.api.settings import router as settings_router
+from app.api.patterns import router as patterns_router
 
 
 NAME = config["cerebro"]["name"]
@@ -61,6 +62,7 @@ app.include_router(metrics_router)
 app.include_router(quant_screener_router)
 app.include_router(history_router)
 app.include_router(settings_router)
+app.include_router(patterns_router)
 
 
 @app.get("/", tags=["System"])

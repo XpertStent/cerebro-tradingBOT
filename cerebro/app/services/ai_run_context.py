@@ -8,6 +8,8 @@ from app.services.watchlist import watchlist
 from app.services.latest_quant import latest_quant
 from app.services.market_data import market_data
 from app.services.settings import settings
+from app.services.technical_analysis import technical_analysis
+from concurrent.futures import ThreadPoolExecutor
 
 
 class AIRunContextBuilder:
@@ -193,6 +195,26 @@ class AIRunContextBuilder:
         ]
         snapshots_by_symbol = self._market_snapshots(research_symbols)
 
+        pattern_configuration = technical_analysis.configuration()
+        pattern_by_symbol = {}
+        if pattern_configuration["mode"] != "off":
+            # Quant analysis already used the shared candles. Reuse its result;
+            # mandatory holdings/pending/watch names outside quant get the same path.
+            missing = []
+            for symbol in symbols:
+                existing = (quant_by_symbol.get(symbol) or {}).get("technical_analysis")
+                if technical_analysis.is_current(existing, symbol, pattern_configuration):
+                    pattern_by_symbol[symbol] = existing
+                else:
+                    missing.append(symbol)
+            with ThreadPoolExecutor(max_workers=4, thread_name_prefix="candidate-patterns") as pool:
+                for symbol, result in zip(missing, pool.map(technical_analysis.build, missing)):
+                    pattern_by_symbol[symbol] = result
+            if research_progress_callback:
+                for symbol, result in pattern_by_symbol.items():
+                    research_progress_callback(stage="TECHNICAL_ANALYSIS", current_symbol=symbol,
+                                               technical_analysis=result)
+
         research_requests = []
         if enrich_research:
             for symbol in research_symbols:
@@ -293,7 +315,7 @@ class AIRunContextBuilder:
             if symbol in pending_symbols:
                 relationships.append("PENDING_ORDER")
 
-            candidates.append({
+            candidate = {
                 "symbol": symbol,
                 "relationship": relationship,
                 "relationships": relationships,
@@ -306,10 +328,21 @@ class AIRunContextBuilder:
                 "active_thesis": memory.get("active_thesis"),
                 "recent_decisions": memory.get("recent_decisions"),
                 "rejection_summary": memory.get("rejection_summary"),
-            })
+            }
+            pattern_result = pattern_by_symbol.get(symbol)
+            # Web research can span a session boundary. Revalidate immediately
+            # before assembling model input, even when the saved quant was current.
+            if pattern_result and pattern_result.get("available") and not technical_analysis.is_current(pattern_result, symbol, pattern_configuration):
+                pattern_result = technical_analysis.unavailable(symbol, "CURRENT_COMPLETED_HISTORY_REQUIRED", pattern_configuration)
+            pattern_context = technical_analysis.model_context(pattern_result)
+            if pattern_context is not None:
+                candidate["technical_analysis"] = pattern_context
+            candidates.append(candidate)
 
         if market_data.configuration() != data_configuration:
             raise RuntimeError("Market-data settings changed while building AI context. Run a new cycle.")
+        if technical_analysis.configuration() != pattern_configuration:
+            raise RuntimeError("Pattern settings changed while building AI context. Run a new cycle.")
         return {
             "schema_version": 5,
             "run": {

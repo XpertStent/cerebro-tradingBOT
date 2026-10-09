@@ -43,6 +43,7 @@ class WorkflowHistoryTests(unittest.TestCase):
         namespace = dict(mean=mean, datetime=datetime, ZoneInfo=ZoneInfo, monotonic=monotonic, settings=settings,
                          market_data=market_data, universe_service=universe, local_discovery=discovery, opend=opend,
                          market_series=self.series, market_metrics=self.metrics, trading=trading,
+                         technical_analysis=SimpleNamespace(analyze_series=lambda symbol, series: {"available": False, "reason": "TEST_DISABLED"}),
                          HistoryQuotaReserved=type("HistoryQuotaReserved", (RuntimeError,), {}))
         self.screener = load_class("quant_screener.py", "QuantScreener", namespace)()
         self.screener._batched_snapshots = Mock(return_value=({"US.SPY": {}, "US.TEST": {}}, []))
@@ -62,6 +63,13 @@ class WorkflowHistoryTests(unittest.TestCase):
     def callback(self, **values):
         self.updates.append(deepcopy(values))
         self.manager._quant_progress("test", **values)
+
+    def test_equal_factor_values_have_equal_order_independent_percentiles(self):
+        values=[('US.A',1),('US.B',2),('US.C',2),('US.D',3),('US.MISSING',None)]
+        ranked=self.screener._percentiles(values)
+        self.assertEqual(ranked,{'US.A':0.0,'US.B':50.0,'US.C':50.0,'US.D':100.0})
+        self.assertEqual(ranked,self.screener._percentiles(list(reversed(values))))
+        self.assertEqual(self.screener._percentiles([('US.A',2),('US.B',2)]),{'US.A':50.0,'US.B':50.0})
 
     def test_same_inline_event_updates_with_actual_counts_and_benchmark(self):
         self.screener.run(progress_callback=self.callback)

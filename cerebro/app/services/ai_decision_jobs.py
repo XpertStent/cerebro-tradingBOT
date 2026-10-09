@@ -155,6 +155,18 @@ class AIDecisionJobManager:
             self._event(run_id, "QUANT", f"Historical analysis: {current_symbol}", symbol=current_symbol)
 
     def _research_progress(self, run_id, **values):
+        if values.get("stage") == "TECHNICAL_ANALYSIS":
+            with self._lock:
+                job = self._jobs.get(run_id)
+                if not job:
+                    return
+                detail = deepcopy(values.get("technical_analysis") or {})
+                symbol = values.get("current_symbol")
+                job.setdefault("events", []).append({"id": f"patterns:{symbol}", "at": self._iso_now(),
+                    "stage": "PATTERNS", "symbol": symbol, "kind": "INFO",
+                    "message": f"{symbol}: {detail.get('bars_analyzed', 0)} completed candles, {detail.get('event_count', 0)} pattern records · {detail.get('mode', 'observe')}",
+                    "pattern_details": detail})
+            return
         with self._lock:
             job = self._jobs.get(run_id)
             if not job:
