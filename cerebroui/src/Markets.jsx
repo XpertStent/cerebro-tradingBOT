@@ -3,6 +3,7 @@ import useSymbolSearch from "./useSymbolSearch";
 import { fetchJson } from "./fetchJson";
 import { securityLabel, selectedSecurityForQuery } from "./marketSelection";
 import { historyQuotaFailure, candleFailureMessage } from "./candleErrors";
+import { chartTime, createChartTimeFormatters, lastCandleLabel } from "./chartTime";
 import React, {
   useEffect,
   useRef,
@@ -57,44 +58,6 @@ function formatPrice(value) {
       minimumFractionDigits: 2,
       maximumFractionDigits: 4
     }
-  );
-}
-
-
-function chartTime(value, timeframe, timestamp) {
-
-  if (!value)
-    return null;
-
-  if (
-    timeframe === "1d" ||
-    timeframe === "1w"
-  ) {
-    return value.slice(0, 10);
-  }
-
-  if (Number.isFinite(timestamp)) return timestamp;
-
-  const [
-    datePart,
-    timePart = "00:00:00"
-  ] = value.split(" ");
-
-  const [year, month, day] =
-    datePart.split("-").map(Number);
-
-  const [hour, minute, second] =
-    timePart.split(":").map(Number);
-
-  return Math.floor(
-    new Date(
-      year,
-      month - 1,
-      day,
-      hour,
-      minute,
-      second || 0
-    ).getTime() / 1000
   );
 }
 
@@ -727,7 +690,7 @@ export default function Markets() {
             <div className="chartToolbar">
               <label><input type="checkbox" checked={followLatest} onChange={event => setFollowLatest(event.target.checked)}/> Follow latest (refresh every 30s)</label>
               <button onClick={() => { setFollowLatest(true); setLatestJump(value => value + 1); }}>Latest</button>
-              <span>Last candle: {chartInfo?.latest_candle_time || (loading ? "Loading…" : "Unavailable")} {chartInfo?.timezone || ""}</span>
+              <span>{loading && !candles.length ? "Loading candles…" : lastCandleLabel(candles.at(-1), timeframe, chartInfo?.timezone)}{chartInfo?.timezone ? ` · Exchange timezone: ${chartInfo.timezone}` : ""}</span>
 
               <div className="timeframeButtons">
 
@@ -954,7 +917,7 @@ export default function Markets() {
 }
 
 
-function PriceChart({ candles, followLatest, latestJump, timeframe, timezone, chartType, showVolume, onLoadOlder, onBrowseHistory }) {
+export function PriceChart({ candles, followLatest, latestJump, timeframe, timezone, chartType, showVolume, onLoadOlder, onBrowseHistory }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const previousData = useRef([]);
@@ -963,18 +926,16 @@ function PriceChart({ candles, followLatest, latestJump, timeframe, timezone, ch
   latestProps.current = { onLoadOlder, candles, followLatest };
 
   useEffect(() => {
+    const formatters = createChartTimeFormatters(timeframe, timezone);
     const chart = createChart(containerRef.current, {
       autoSize: true,
       layout: { background: { color: "#ffffff" }, textColor: "#64748b" },
       grid: { vertLines: { color: "#f1f5f9" }, horzLines: { color: "#f1f5f9" } },
       rightPriceScale: { borderColor: "#e2e8f0" },
-      localization: { timeFormatter: time => typeof time === "number"
-        ? new Intl.DateTimeFormat("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
-        : `${time.year}-${time.month}-${time.day}` },
+      localization: { timeFormatter: formatters.timeFormatter },
       timeScale: { borderColor: "#e2e8f0", timeVisible: !["1d", "1w"].includes(timeframe),
-        tickMarkFormatter: time => typeof time === "number"
-          ? new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time * 1000))
-          : `${time.year}-${time.month}-${time.day}` }
+        secondsVisible: false, fixRightEdge: true, fixLeftEdge: true, rightOffset: 0,
+        tickMarkFormatter: formatters.tickMarkFormatter }
     });
     const price = chart.addSeries(chartType === "candles" ? CandlestickSeries : LineSeries, chartType === "line" ? { lineWidth: 2 } : {});
     const volume = showVolume ? chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "" }) : null;
@@ -1010,9 +971,9 @@ function PriceChart({ candles, followLatest, latestJump, timeframe, timezone, ch
     if (!followLatest && range) {
       chart.timeScale().setVisibleLogicalRange({ from: range.from + added, to: range.to + added });
     } else if (!previous.length) {
-      chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 100), to: candles.length + 3 });
+      chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 100), to: candles.length - 1 });
     } else if (followLatest) {
-      chart.timeScale().scrollToRealTime();
+      chart.timeScale().scrollToPosition(0, false);
     }
     previousData.current = candles;
     state.updating = false;
