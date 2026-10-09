@@ -1,6 +1,7 @@
 from statistics import mean
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from time import monotonic
 
 from app.services.account_fields import account_context, number
 from app.services.trading import trading
@@ -179,22 +180,58 @@ class QuantScreener:
         # Load the benchmark before spending new-stock slots on candidates.
         # If it is unavailable, fail explicitly rather than rank stocks against
         # missing benchmark data after an expensive scan.
-        benchmark_series = market_series.build(
-            benchmark_symbol,
-            snapshot=snapshot_map.get(benchmark_symbol),
-            market_state=us_state,
-            minimum_bars=minimum_history_bars,
+        benchmark_started = monotonic()
+        benchmark_series = None
+        self._progress(
+            progress_callback,
+            current_symbol=benchmark_symbol,
+            history_analysis=self._history_detail(
+                benchmark_symbol, minimum_history_bars, benchmark_symbol,
+                role="BENCHMARK", configuration=data_configuration,
+            ),
         )
-        benchmark = market_metrics.build(
-            benchmark_symbol,
-            candles=benchmark_series["bars"],
-        )
+        try:
+            benchmark_series = market_series.build(
+                benchmark_symbol,
+                snapshot=snapshot_map.get(benchmark_symbol),
+                market_state=us_state,
+                minimum_bars=minimum_history_bars,
+            )
+            benchmark = market_metrics.build(
+                benchmark_symbol,
+                candles=benchmark_series["bars"],
+            )
+            if not benchmark.get("available"):
+                raise ValueError("Benchmark history is unavailable; relative-strength ranking cannot proceed.")
+        except Exception as exc:
+            self._progress(
+                progress_callback,
+                history_analysis=self._history_detail(
+                    benchmark_symbol, minimum_history_bars, benchmark_symbol,
+                    role="BENCHMARK", configuration=data_configuration,
+                    history=(benchmark_series or {}).get("history_sync") or getattr(exc, "history_sync", None),
+                    status="ERROR", reason=str(exc), started=benchmark_started,
+                    checked=len((benchmark_series or {}).get("bars", [])),
+                ),
+            )
+            raise
         benchmark["data_quality"] = benchmark_series["history_sync"]
-        if not benchmark.get("available"):
-            raise ValueError("Benchmark history is unavailable; relative-strength ranking cannot proceed.")
+        self._progress(
+            progress_callback,
+            history_analysis=self._history_detail(
+                benchmark_symbol, minimum_history_bars, benchmark_symbol,
+                role="BENCHMARK", configuration=data_configuration,
+                history=benchmark_series["history_sync"], metrics=benchmark,
+                status="ANALYSED", started=benchmark_started,
+                checked=len(benchmark_series["bars"]),
+            ),
+        )
 
         for index, item in enumerate(deep_candidates, start=1):
             symbol = item["symbol"]
+            analysis_started = monotonic()
+            history_info = None
+            checked_bars = 0
 
             self._progress(
                 progress_callback,
@@ -208,6 +245,10 @@ class QuantScreener:
                 analysis_skipped=analysis_skipped,
                 analysis_failures=analysis_failures,
                 message=f"Analysing {symbol}",
+                history_analysis=self._history_detail(
+                    symbol, minimum_history_bars, benchmark_symbol,
+                    configuration=data_configuration,
+                ),
             )
 
             snapshot = snapshot_map.get(symbol, {})
@@ -262,6 +303,12 @@ class QuantScreener:
                     analysis_skipped=analysis_skipped,
                     analysis_failures=analysis_failures,
                     message=f"Skipped {symbol}: {reason}",
+                    history_analysis=self._history_detail(
+                        symbol, minimum_history_bars, benchmark_symbol,
+                        configuration=data_configuration, status="SKIPPED",
+                        reason=reason, started=analysis_started,
+                        history={"count": 0, "bars": 0, "fetched_count": 0, "saved_count": 0},
+                    ),
                 )
                 continue
 
@@ -274,6 +321,8 @@ class QuantScreener:
                 )
 
                 sync_info = series.get("history_sync", {})
+                history_info = sync_info
+                checked_bars = len(series["bars"])
                 if sync_info.get("source") == "CACHE":
                     cache_hits += 1
                 else:
@@ -293,6 +342,7 @@ class QuantScreener:
                 }
             except Exception as exc:
                 analysis_failures += 1
+                history_info = getattr(exc, "history_sync", None) or history_info
                 metrics = {
                     "symbol": symbol,
                     "available": False,
@@ -329,6 +379,14 @@ class QuantScreener:
                     analysis_skipped=analysis_skipped,
                     analysis_failures=analysis_failures,
                     message=f"Skipped {symbol}: {metrics.get('skip_reason') or metrics.get('error') or 'unavailable history'}",
+                    history_analysis=self._history_detail(
+                        symbol, minimum_history_bars, benchmark_symbol,
+                        configuration=data_configuration, history=history_info,
+                        metrics=metrics, checked=checked_bars,
+                        status="ERROR" if metrics.get("error") else "SKIPPED",
+                        reason=metrics.get("skip_reason") or metrics.get("error") or "UNAVAILABLE_METRICS",
+                        started=analysis_started,
+                    ),
                 )
                 continue
 
@@ -346,6 +404,12 @@ class QuantScreener:
                 analysis_skipped=analysis_skipped,
                 analysis_failures=analysis_failures,
                 message=f"Analysed {index} / {len(deep_candidates)}",
+                history_analysis=self._history_detail(
+                    symbol, minimum_history_bars, benchmark_symbol,
+                    configuration=data_configuration, history=history_info,
+                    metrics=metrics, checked=checked_bars,
+                    status="ANALYSED", started=analysis_started,
+                ),
             )
 
         for item in analysed:
@@ -477,6 +541,56 @@ class QuantScreener:
                 "return_120d_pct": benchmark.get("return_120d_pct"),
             },
             "candidates": final,
+        }
+
+    def _history_detail(
+        self, symbol, minimum, benchmark, *, configuration, role="CANDIDATE",
+        history=None, metrics=None, status="RUNNING", reason=None, started=None,
+        checked=0,
+    ):
+        history = history or {}
+        metrics = metrics or {}
+        return {
+            "symbol": symbol,
+            "role": role,
+            "status": status,
+            "reason": reason,
+            "provider": history.get("provider", configuration.get("provider")),
+            "feed": history.get("feed", configuration.get("feed")),
+            "adjustment": history.get("adjustment", configuration.get("adjustment")),
+            "session": history.get("session"),
+            "timeframe": "1d",
+            "timezone": history.get("timezone"),
+            "delay_minutes": history.get("delay_minutes", configuration.get("delay_minutes")),
+            "configured_count": int(settings.get("history.fetch_count")),
+            "requested_count": history.get("requested_count", max(minimum, int(settings.get("history.fetch_count")))),
+            "minimum_bars": minimum,
+            "fetched_count": history.get("fetched_count"),
+            "saved_count": history.get("saved_count"),
+            "returned_count": history.get("count"),
+            "completed_count": history.get("bars"),
+            "checked_count": checked,
+            # Only count candles used to calculate indicators, not rejected history.
+            "analysed_count": metrics.get("bars", 0) if metrics.get("price") is not None else 0,
+            "source": history.get("source"),
+            "fresh": history.get("fresh"),
+            "usable": history.get("usable"),
+            "expected_complete_date": history.get("expected_complete_date"),
+            "latest_candle_time": history.get("latest_candle_time"),
+            "latest_completed_candle_time": history.get("latest_completed_candle_time"),
+            "oldest_completed_candle_time": history.get("oldest_completed_candle_time"),
+            "last_sync_at": history.get("last_sync_at"),
+            "refresh_error": history.get("refresh_error"),
+            "benchmark_symbol": benchmark,
+            "elapsed_seconds": round(monotonic() - started, 2) if started is not None else None,
+            "indicators": {
+                key: metrics[key] for key in (
+                    "return_20d_pct", "return_60d_pct", "return_120d_pct",
+                    "rsi_14", "atr_pct", "ema20", "ema50", "ema200",
+                    "volume_ratio_20d", "median_turnover_60d", "invalid_ohlc_bars",
+                    "unchanged_sessions_20d", "discontinuity_events",
+                ) if key in metrics
+            },
         }
 
     def _progress(self, callback, **values):

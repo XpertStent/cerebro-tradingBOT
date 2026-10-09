@@ -201,6 +201,7 @@ class MarketDataService:
             )
             # Daily chart and quant share the same root window and adjustment basis.
             source, failure = "CACHE", None
+            fetched_count = cached_count = 0
             if not reusable or rebase:
                 effective = now - timedelta(
                     minutes=cfg["delay_minutes"],
@@ -232,6 +233,7 @@ class MarketDataService:
                     fetch_count = max(fetch_count, len(cached) + count)
                 try:
                     bars = self._fetch(key, fetch_count, start, end, automatic)
+                    fetched_count = len(bars)
                     clean = []
                     for row in bars:
                         bar = dict(row)
@@ -270,6 +272,7 @@ class MarketDataService:
                         end_ts=int(end.timestamp()),
                         rebase=basis if rebase else None,
                     )
+                    cached_count = len(clean)
                     cached = self.cache.rows(key)
                     window = self.cache.window(key, cursor)
                     source = cfg["provider"].upper()
@@ -335,6 +338,9 @@ class MarketDataService:
                     self.cache.rebase_session(key) if adjusted else "raw"
                 ),
                 "count": len(rows),
+                "requested_count": count,
+                "fetched_count": fetched_count,
+                "saved_count": cached_count,
                 "candles": rows,
                 "source": source,
                 "fresh": bool(fresh),
@@ -369,7 +375,11 @@ class MarketDataService:
         ]
         # A developing current-day bar must not reduce the configured completed count.
         if len(rows) < minimum and result["count"] >= count:
+            previous_fetch = result["fetched_count"]
+            previous_saved = result["saved_count"]
             result = self.get_candles(symbol, "1d", count=count + 1, automatic=True)
+            result["fetched_count"] += previous_fetch
+            result["saved_count"] += previous_saved
             rows = [
                 bar
                 for bar in result["candles"]
@@ -377,6 +387,8 @@ class MarketDataService:
             ]
         result["candles"] = rows
         result["bars"] = len(rows)
+        result["latest_completed_candle_time"] = rows[-1]["time"] if rows else None
+        result["oldest_completed_candle_time"] = rows[0]["time"] if rows else None
         if not result["fresh"] or len(rows) < minimum:
             result["usable"] = False
             result["skip_reason"] = (

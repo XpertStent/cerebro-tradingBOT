@@ -36,6 +36,7 @@ class AIDecisionJobManager:
                 return
             events = job.setdefault("events", [])
             events.append({
+                "id": uuid.uuid4().hex,
                 "at": self._iso_now(),
                 "stage": stage,
                 "kind": kind,
@@ -117,6 +118,7 @@ class AIDecisionJobManager:
         return self.progress(run_id)
 
     def _quant_progress(self, run_id, **values):
+        history = values.pop("history_analysis", None)
         with self._lock:
             job = self._jobs.get(run_id)
             if not job:
@@ -131,8 +133,24 @@ class AIDecisionJobManager:
             job["percent"] = round(float(quant.get("percent") or 0) * 0.55, 1)
             job["message"] = quant.get("message") or job.get("message")
             current_symbol = quant.get("current_symbol")
+            if history:
+                # Update the same row so an open inspector survives live polling.
+                event_id = f"history:{history['role']}:{history['symbol']}"
+                events = job.setdefault("events", [])
+                event = next((item for item in events if item.get("id") == event_id), None)
+                if event is None:
+                    event = {"id": event_id, "at": self._iso_now(), "stage": "QUANT", "symbol": history["symbol"]}
+                    events.append(event)
+                    if len(events) > 250:
+                        del events[:-250]
+                status = history["status"]
+                event.update(
+                    kind="ERROR" if status == "ERROR" else "SUCCESS" if status == "ANALYSED" else "INFO",
+                    message=f"{'Benchmark' if history['role'] == 'BENCHMARK' else 'Historical'} analysis: {history['symbol']}",
+                    details=deepcopy(history),
+                )
 
-        if current_symbol and current_symbol != previous_symbol:
+        if not history and current_symbol and current_symbol != previous_symbol:
             self._event(run_id, "QUANT", f"Historical analysis: {current_symbol}", symbol=current_symbol)
 
     def _research_progress(self, run_id, **values):

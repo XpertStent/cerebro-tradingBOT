@@ -126,10 +126,17 @@ class DataTests(unittest.TestCase):
     def test_chart_quant_and_metrics_share_cache_and_fetch_count(self):
         chart = self.data.get_candles("US.TEST", count=50)
         self.assertTrue(chart["fresh"])
+        self.assertEqual(chart["fetched_count"], 100)
+        self.assertEqual(chart["saved_count"], 100)
+        self.assertEqual(chart["requested_count"], 50)
         self.assertEqual(self.opend.get_candles.call_args.kwargs["count"], 100)
         history = self.data.completed_history("US.TEST")
         self.assertTrue(history["usable"])
         self.assertEqual(history["source"], "CACHE")
+        self.assertEqual(history["fetched_count"], 0)
+        self.assertEqual(history["count"], 100)
+        self.assertEqual(history["bars"], 100)
+        self.assertEqual(history["latest_completed_candle_time"], history["candles"][-1]["time"])
         self.assertEqual(self.opend.get_candles.call_count, 1)
         metrics = load("market_metrics", self.replacements).market_metrics.build(
             "US.TEST"
@@ -137,6 +144,33 @@ class DataTests(unittest.TestCase):
         self.assertTrue(metrics["available"])
         self.assertEqual(metrics["data_quality"]["adjustment"], "qfq")
         self.assertEqual(self.opend.get_candles.call_count, 1)
+
+    def test_developing_candle_retry_reports_all_downloads_and_completed_dates(self):
+        self.values["history.minimum_completed_bars"] = 100
+        developing = {
+            **self.bars(1)[0],
+            "timestamp": int(datetime(2026, 10, 6, 4, tzinfo=timezone.utc).timestamp()),
+        }
+        self.opend.get_candles.side_effect = lambda **kw: {
+            "candles": self.bars(kw["count"] - 1) + [developing]
+        }
+        history = self.data.completed_history("US.TEST")
+        self.assertTrue(history["usable"])
+        self.assertEqual(self.opend.get_candles.call_count, 2)
+        self.assertEqual((history["fetched_count"], history["saved_count"]), (201, 201))
+        self.assertEqual((history["count"], history["bars"]), (101, 100))
+        self.assertEqual(history["latest_candle_time"], "2026-10-06 00:00:00")
+        self.assertEqual(history["latest_completed_candle_time"], "2026-10-05 00:00:00")
+
+    def test_unusable_series_preserves_fetch_diagnostics_in_its_error(self):
+        self.opend.get_candles.side_effect = lambda **kw: {"candles": self.bars(10)}
+        series = load("market_series", self.replacements)
+        with self.assertRaises(series.HistoryUnavailable) as caught:
+            series.market_series.build("US.TEST")
+        self.assertEqual(caught.exception.code, "INSUFFICIENT_HISTORY")
+        self.assertEqual(caught.exception.history_sync["fetched_count"], 10)
+        self.assertEqual(caught.exception.history_sync["bars"], 10)
+        self.assertNotIn("candles", caught.exception.history_sync)
 
     def test_provider_feed_adjustment_and_delay_are_isolated_and_persist(self):
         self.data.completed_history("US.TEST")

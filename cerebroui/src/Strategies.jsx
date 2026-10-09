@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
   BrainCircuit,
   CheckCircle2,
@@ -17,6 +16,7 @@ import {
 
 import "./AIEngine.css";
 import CollapsibleSection from "./CollapsibleSection";
+import WorkflowEvent from "./WorkflowEvent";
 import { brokerAction } from "./TradingControls";
 import { RESOLVED_STATUSES, confirmationMatches, batchTotals } from "./decisionActions";
 
@@ -426,18 +426,14 @@ export default function Strategies() {
 
       <CollapsibleSection
         title="Live Workflow Activity"
-        subtitle="Operational events from quant, research, model and risk stages."
+        subtitle="Operational events from quant, research, model and risk stages. Click a historical analysis item for candle details."
         defaultOpen={running}
         bodyClassName="scrollRegion compact"
       >
         {events.length === 0 ? <div className="aiEmpty">No live workflow events yet.</div> : (
           <div className="aiEventList">
-            {events.slice().reverse().map((event, index) => (
-              <div className={`aiEvent ${event.kind === "ERROR" ? "error" : event.kind === "SUCCESS" ? "success" : ""}`} key={`${event.at}-${index}`}>
-                <Activity size={14}/>
-                <div><strong>{event.stage}</strong><span>{event.message}</span></div>
-                <time>{new Date(event.at).toLocaleTimeString()}</time>
-              </div>
+            {events.slice().reverse().map(event => (
+              <WorkflowEvent event={event} key={`${runId || progress?.run_id}-${event.id || `${event.at}-${event.stage}-${event.symbol || event.message}`}`}/>
             ))}
           </div>
         )}
