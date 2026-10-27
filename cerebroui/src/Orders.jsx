@@ -362,6 +362,7 @@ export default function Orders() {
     </fieldset>
   );
 
+  const failedRiskChecks = (preview?.risk_checks || []).filter(check => !check.passed);
   const riskPanel = !preview ? (
     <div className="riskEmpty">Preview an order to run the risk engine against the current {mode} account.</div>
   ) : (
@@ -373,6 +374,17 @@ export default function Orders() {
           <span>{preview.mode} execution</span>
         </div>
       </div>
+
+      {!preview.approved && <section className="riskBlockReasons" role="status" aria-labelledby="risk-block-reasons-title">
+        <h3 id="risk-block-reasons-title">Why this order is blocked</h3>
+        {failedRiskChecks.length ? <>
+          <p>{failedRiskChecks.length} {failedRiskChecks.length === 1 ? "check failed" : "checks failed"}. Every check must pass before execution.</p>
+          <ul>{failedRiskChecks.map(check => <li key={check.name}>
+            <strong>{check.name.replaceAll("_", " ")}</strong>
+            <span>{check.message}</span>
+          </li>)}</ul>
+        </> : <p>The preview did not return a detailed reason. Preview the order again to refresh the checks.</p>}
+      </section>}
 
       <div className="previewAccountGrid">
         <div className="previewAccountCard"><span>Account</span><strong>{preview.account?.account_id_masked || "—"}</strong></div>
